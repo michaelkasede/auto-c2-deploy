@@ -606,17 +606,14 @@ main() {
             # Deploy primary to AWS
             generate_stealth_terraform "aws" "primary"
             deploy_to_cloud "aws" "primary"
-            configure_services "aws" "primary"
             
             # Deploy backup to Azure
             generate_stealth_terraform "azure" "backup"
             deploy_to_cloud "azure" "backup"
-            configure_services "azure" "backup"
             
             # Deploy backup to GCP
             generate_stealth_terraform "gcp" "backup"
             deploy_to_cloud "gcp" "backup"
-            configure_services "gcp" "backup"
             
             setup_stealth_monitoring
             ;;
@@ -625,7 +622,6 @@ main() {
             
             generate_stealth_terraform "$CLOUD_PROVIDER" "$DEPLOYMENT_MODE"
             deploy_to_cloud "$CLOUD_PROVIDER" "$DEPLOYMENT_MODE"
-            configure_services "$CLOUD_PROVIDER" "$DEPLOYMENT_MODE"
             setup_stealth_monitoring
             ;;
         *)

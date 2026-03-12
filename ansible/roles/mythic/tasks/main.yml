@@ -1,0 +1,19 @@
+---
+- name: Create Mythic directory structure
+  file:
+    path: "/opt/mythic/{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - ssl
+    - data
+
+- name: Deploy Mythic docker-compose
+  template:
+    src: docker-compose.yml.j2
+    dest: /opt/mythic/docker-compose.yml
+
+- name: Start Mythic
+  community.docker.docker_compose:
+    project_src: /opt/mythic
+    state: present

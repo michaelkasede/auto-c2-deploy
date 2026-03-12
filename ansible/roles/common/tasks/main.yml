@@ -1,0 +1,52 @@
+---
+- name: Wait for cloud-init to finish
+  raw: test -f /var/lib/cloud/instance/boot-finished
+  register: cloud_init_check
+  until: cloud_init_check.rc == 0
+  retries: 20
+  delay: 10
+
+- name: Update apt cache
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: Install common packages
+  apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+      - jq
+      - python3-pip
+    state: present
+
+- name: Install Docker
+  shell: |
+    curl -fsSL https://get.docker.com -o get-docker.sh
+    sh get-docker.sh
+    usermod -aG docker ubuntu
+  args:
+    creates: /usr/bin/docker
+
+- name: Install Docker Compose
+  get_url:
+    url: https://github.com/docker/compose/releases/latest/download/docker-compose-Linux-x86_64
+    dest: /usr/local/bin/docker-compose
+    mode: '0755'
+
+- name: Create service directories
+  file:
+    path: "/opt/{{ service_name }}"
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+
+- name: System hardening - disable server tokens in nginx globally
+  copy:
+    content: "server_tokens off;"
+    dest: /etc/nginx/conf.d/hide-tokens.conf
+  when: ansible_facts.packages['nginx'] is defined

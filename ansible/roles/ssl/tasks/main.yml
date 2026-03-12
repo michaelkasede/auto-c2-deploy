@@ -1,0 +1,45 @@
+---
+- name: Install Certbot and Nginx
+  apt:
+    name:
+      - certbot
+      - python3-certbot-nginx
+      - nginx
+    state: present
+
+- name: Create SSL directories
+  file:
+    path: "/etc/ssl/{{ service_name }}"
+    state: directory
+
+- name: Request SSL certificate (HTTP challenge)
+  command: >
+    certbot certonly --nginx -d {{ domain }}
+    --non-interactive --agree-tos --email admin@{{ domain }}
+    --cert-name {{ service_name }}
+  args:
+    creates: "/etc/letsencrypt/live/{{ domain }}/fullchain.pem"
+  when: stealth_level != "high"
+
+- name: Setup auto-renewal cron job
+  cron:
+    name: "Renew SSL for {{ service_name }}"
+    minute: "0"
+    hour: "12"
+    job: "certbot renew --quiet --post-hook 'systemctl reload nginx'"
+
+- name: Configure Nginx SSL
+  template:
+    src: nginx-ssl.conf.j2
+    dest: "/etc/nginx/sites-available/{{ service_name }}-ssl.conf"
+
+- name: Enable Nginx site
+  file:
+    src: "/etc/nginx/sites-available/{{ service_name }}-ssl.conf"
+    dest: "/etc/nginx/sites-enabled/{{ service_name }}-ssl.conf"
+    state: link
+
+- name: Reload Nginx
+  systemd:
+    name: nginx
+    state: reloaded

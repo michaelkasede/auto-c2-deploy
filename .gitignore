@@ -1,0 +1,66 @@
+# Core Mandates: Never commit secrets, keys, or sensitive data.
+
+# === Project Specific ===
+engagements/
+backups/
+logs/
+outputs/
+ssl-certs/
+monitoring/stealth-monitor.yaml
+monitoring/cross-cloud-monitor.yaml
+failover-config.yaml
+access_info_*.json
+deployment.json
+access.json
+
+# === SSH Keys ===
+*.pem
+*.key
+pub.key
+id_rsa*
+redteam-key*
+
+# === Terraform ===
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+_override.tf
+_override.tf.json
+.terraform.lock.hcl
+
+# === Ansible ===
+ansible/retry
+*.retry
+.ansible_vault_password
+ansible/inventory/hosts # If using static hosts with sensitive IPs
+
+# === Cloud Configs ===
+cloud-configs/*/terraform/.terraform/
+cloud-configs/*/terraform/*.tfstate*
+cloud-configs/*/terraform/*.tfvars*
+
+# === Environment & Secrets ===
+.env
+.env.*
+secrets.yaml
+credentials.json
+
+# === OS & IDE ===
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+.env/

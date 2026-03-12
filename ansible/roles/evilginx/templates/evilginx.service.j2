@@ -1,0 +1,13 @@
+[Unit]
+Description=Evilginx2 Phishing Framework
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/evilginx2
+ExecStart=/opt/evilginx2/evilginx
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

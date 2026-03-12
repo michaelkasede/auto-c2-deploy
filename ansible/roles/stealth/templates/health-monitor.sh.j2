@@ -1,0 +1,6 @@
+#!/bin/bash
+# Health monitoring with basic metrics for {{ service_name }}
+CONTAINER_STATUS=$(docker ps --format 'table {{.Names}}\t{{.Status}}' | grep {{ service_name }})
+MEMORY_USAGE=$(docker stats --no-stream --format 'table {{.MemPerc}}' {{ service_name }} | tail -n +2)
+echo "$(date): {{ service_name }} Status: $CONTAINER_STATUS"
+echo "$(date): Memory Usage: $MEMORY_USAGE"

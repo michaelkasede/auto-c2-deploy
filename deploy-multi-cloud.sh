@@ -945,9 +945,6 @@ deploy_primary() {
     mkdir -p outputs
     deploy_to_cloud "$PRIMARY_PROVIDER" "primary"
     
-    # Configure services on primary
-    ./configure-services.sh "$PRIMARY_PROVIDER" "primary"
-    
     log "Primary infrastructure deployment completed"
 }
 
@@ -960,9 +957,6 @@ deploy_backup() {
         log "Deploying backup infrastructure to $provider..."
         
         deploy_to_cloud "$provider" "backup"
-        
-        # Configure minimal services on backup
-        ./configure-services.sh "$provider" "backup"
     done
     
     log "Backup infrastructure deployment completed"

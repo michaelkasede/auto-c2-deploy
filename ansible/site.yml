@@ -1,0 +1,36 @@
+---
+- name: Configure Red Team Infrastructure
+  hosts: all
+  become: yes
+  gather_facts: yes
+  roles:
+    - common
+    - stealth
+
+- name: Configure Mythic
+  hosts: mythic
+  become: yes
+  roles:
+    - mythic
+    - ssl
+
+- name: Configure GoPhish
+  hosts: gophish
+  become: yes
+  roles:
+    - gophish
+    - ssl
+
+- name: Configure Evilginx
+  hosts: evilginx
+  become: yes
+  roles:
+    - evilginx
+    - ssl
+
+- name: Configure Pwndrop
+  hosts: pwndrop
+  become: yes
+  roles:
+    - pwndrop
+    - ssl

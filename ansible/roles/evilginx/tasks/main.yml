@@ -1,0 +1,36 @@
+---
+- name: Install Go
+  unarchive:
+    src: https://go.dev/dl/go1.21.0.linux-amd64.tar.gz
+    dest: /usr/local
+    remote_src: yes
+    creates: /usr/local/go
+
+- name: Add Go to PATH
+  lineinfile:
+    path: /home/ubuntu/.bashrc
+    line: 'export PATH=$PATH:/usr/local/go/bin'
+    state: present
+
+- name: Clone Evilginx2
+  git:
+    repo: https://github.com/kgretzky/evilginx2.git
+    dest: /opt/evilginx2
+
+- name: Build Evilginx2
+  shell: /usr/local/go/bin/go build -o evilginx
+  args:
+    chdir: /opt/evilginx2
+    creates: /opt/evilginx2/evilginx
+
+- name: Create Evilginx systemd service
+  template:
+    src: evilginx.service.j2
+    dest: /etc/systemd/system/evilginx.service
+
+- name: Start and enable Evilginx
+  systemd:
+    name: evilginx
+    state: started
+    enabled: yes
+    daemon_reload: yes

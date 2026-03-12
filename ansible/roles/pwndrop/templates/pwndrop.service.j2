@@ -1,0 +1,13 @@
+[Unit]
+Description=Pwndrop File Server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/etc/pwndrop
+ExecStart=/usr/local/bin/pwndrop
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

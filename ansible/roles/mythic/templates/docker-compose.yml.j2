@@ -1,0 +1,21 @@
+version: '3.8'
+services:
+  mythic:
+    image: its-a-feature/mythic:latest
+    container_name: mythic
+    ports:
+      - '7443:7443'
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./ssl:/etc/ssl/mythic
+      - ./data:/opt/mythic/data
+    environment:
+      - MYTHIC_ENV=production
+      - STEALTH_MODE={{ stealth_level }}
+    restart: unless-stopped
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '10m'
+        max-file: '3'

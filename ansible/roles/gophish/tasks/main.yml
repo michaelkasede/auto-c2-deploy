@@ -1,0 +1,19 @@
+---
+- name: Create GoPhish directory structure
+  file:
+    path: "/opt/gophish/{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - data
+    - ssl
+
+- name: Deploy GoPhish docker-compose
+  template:
+    src: docker-compose.yml.j2
+    dest: /opt/gophish/docker-compose.yml
+
+- name: Start GoPhish
+  community.docker.docker_compose:
+    project_src: /opt/gophish
+    state: present

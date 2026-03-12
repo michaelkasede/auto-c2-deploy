@@ -1,0 +1,4 @@
+#!/bin/bash
+# Rotate {{ service_name }} logs for stealth
+find /var/lib/docker/containers/ -name "*.log" -mtime +7 -delete
+docker system prune -f

@@ -1,0 +1,52 @@
+---
+- name: HIGH Stealth - Setup log rotation
+  template:
+    src: rotate-logs.sh.j2
+    dest: "/opt/{{ service_name }}/rotate-logs.sh"
+    mode: '0755'
+  when: stealth_level == "high"
+
+- name: HIGH Stealth - Add log rotation cron job
+  cron:
+    name: "Rotate logs for {{ service_name }}"
+    minute: "0"
+    hour: "2"
+    job: "/opt/{{ service_name }}/rotate-logs.sh"
+  when: stealth_level == "high"
+
+- name: MEDIUM Stealth - Setup basic health monitor
+  template:
+    src: health-monitor.sh.j2
+    dest: "/opt/{{ service_name }}/health-monitor.sh"
+    mode: '0755'
+  when: stealth_level == "medium"
+
+- name: MEDIUM Stealth - Add health monitor cron job
+  cron:
+    name: "Health monitor for {{ service_name }}"
+    minute: "*/30"
+    job: "/opt/{{ service_name }}/health-monitor.sh >> /opt/{{ service_name }}/health.log"
+  when: stealth_level == "medium"
+
+- name: LOW Stealth - Install node exporter
+  docker_container:
+    name: node-exporter
+    image: prom/node-exporter:latest
+    ports:
+      - "9100:9100"
+    restart_policy: unless-stopped
+  when: stealth_level == "low"
+
+- name: Disable metrics endpoints in Nginx (High/Medium Stealth)
+  copy:
+    content: |
+      location /metrics {
+          deny all;
+          return 404;
+      }
+      location /status {
+          deny all;
+          return 404;
+      }
+    dest: /etc/nginx/conf.d/disable-metrics.conf
+  when: stealth_level != "low"

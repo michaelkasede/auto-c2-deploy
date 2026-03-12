@@ -190,6 +190,10 @@ $(date): Engagement started
 EOF
     
     engagement "Infrastructure deployed successfully"
+    
+    # Run Ansible configuration
+    ansible_deployment "$engagement_name"
+    
     log "Engagement $engagement_name is now ACTIVE"
     
     echo ""
@@ -200,6 +204,30 @@ EOF
     echo "  Check status: $0 --status"
     echo "  Stop engagement: $0 --stop"
     echo "  Backup data: $0 --backup"
+}
+
+# Run Ansible deployment
+ansible_deployment() {
+    local engagement_name="$1"
+    header "ANSIBLE CONFIGURATION"
+    log "Running Ansible playbooks for $engagement_name..."
+    
+    if [[ ! -d "ansible" ]]; then
+        warn "Ansible directory not found, skipping Ansible configuration"
+        return
+    fi
+    
+    # Check if ansible is installed
+    if ! command -v ansible-playbook >/dev/null 2>&1; then
+        warn "ansible-playbook not found, skipping Ansible configuration"
+        return
+    fi
+    
+    cd ansible
+    ansible-playbook -i inventory/terraform_inventory.py site.yml
+    cd ..
+    
+    log "Ansible configuration completed"
 }
 
 # Stop current engagement

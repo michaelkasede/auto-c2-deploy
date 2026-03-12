@@ -141,24 +141,25 @@ resource "aws_security_group" "redteam_base" {
   }
 }
 
-# EC2 Instances
-resource "aws_instance" "mythic" {
+# Service Instances
+resource "aws_instance" "service" {
+  for_each = var.instance_types
+
   ami                         = data.aws_ami.ubuntu.id
-  instance_type               = var.instance_types["mythic"]
+  instance_type               = each.value
   subnet_id                   = aws_subnet.public[0].id
   vpc_security_group_ids      = [aws_security_group.redteam_base.id]
   key_name                    = var.ssh_key_name
   associate_public_ip_address = true
   
-  user_data = templatefile("${path.module}/templates/cloud-init-mythic.sh", {
-    hostname = "mythic-${var.environment}"
+  user_data = templatefile("${path.module}/templates/cloud-init-base.sh", {
+    hostname = "${each.key}-${var.environment}"
   })
   
   tags = {
-    Name        = "${var.environment}-mythic"
+    Name        = "${var.environment}-${each.key}"
     Environment = var.environment
-    Service     = "Mythic"
-    Role        = "C2"
+    Service     = each.key
     Provider    = "aws"
   }
 }
@@ -183,8 +184,16 @@ data "aws_availability_zones" "available" {
 
 # Outputs
 output "mythic_instance_ip" {
-  description = "Public IP of Mythic instance"
-  value       = aws_instance.mythic.public_ip
+  value = aws_instance.service["mythic"].public_ip
+}
+output "gophish_instance_ip" {
+  value = aws_instance.service["gophish"].public_ip
+}
+output "evilginx_instance_ip" {
+  value = aws_instance.service["evilginx"].public_ip
+}
+output "pwndrop_instance_ip" {
+  value = aws_instance.service["pwndrop"].public_ip
 }
 
 output "vpc_id" {
@@ -292,23 +301,19 @@ resource "azurerm_network_security_group" "redteam" {
   }
 }
 
-# Public IP
-resource "azurerm_public_ip" "mythic" {
-  name                = "${var.environment}-mythic-pip"
+# Service Instances
+resource "azurerm_public_ip" "pip" {
+  for_each            = var.vm_sizes
+  name                = "${var.environment}-${each.key}-pip"
   location            = azurerm_resource_group.redteam.location
   resource_group_name = azurerm_resource_group.redteam.name
   allocation_method   = "Static"
   sku                = "Standard"
-  
-  tags = {
-    Environment = var.environment
-    Provider    = "azure"
-  }
 }
 
-# Network Interface
-resource "azurerm_network_interface" "mythic" {
-  name                = "${var.environment}-mythic-nic"
+resource "azurerm_network_interface" "nic" {
+  for_each            = var.vm_sizes
+  name                = "${var.environment}-${each.key}-nic"
   location            = azurerm_resource_group.redteam.location
   resource_group_name = azurerm_resource_group.redteam.name
   
@@ -316,22 +321,17 @@ resource "azurerm_network_interface" "mythic" {
     name                          = "internal"
     subnet_id                     = azurerm_subnet.public[0].id
     private_ip_address_allocation = "Dynamic"
-    public_ip_address_id          = azurerm_public_ip.mythic.id
-  }
-  
-  tags = {
-    Environment = var.environment
-    Provider    = "azure"
+    public_ip_address_id          = azurerm_public_ip.pip[each.key].id
   }
 }
 
-# Virtual Machine
-resource "azurerm_linux_virtual_machine" "mythic" {
-  name                  = "${var.environment}-mythic-vm"
+resource "azurerm_linux_virtual_machine" "service" {
+  for_each              = var.vm_sizes
+  name                  = "${var.environment}-${each.key}-vm"
   location              = azurerm_resource_group.redteam.location
   resource_group_name   = azurerm_resource_group.redteam.name
-  network_interface_ids = [azurerm_network_interface.mythic.id]
-  size                  = var.vm_sizes["mythic"]
+  network_interface_ids = [azurerm_network_interface.nic[each.key].id]
+  size                  = each.value
   
   admin_username = "ubuntu"
   admin_ssh_key {
@@ -351,27 +351,29 @@ resource "azurerm_linux_virtual_machine" "mythic" {
     version   = "latest"
   }
   
-  custom_data = base64encode(templatefile("${path.module}/templates/cloud-init-mythic.sh", {
-    hostname = "mythic-${var.environment}"
+  custom_data = base64encode(templatefile("${path.module}/templates/cloud-init-base.sh", {
+    hostname = "${each.key}-${var.environment}"
   }))
   
   tags = {
     Environment = var.environment
-    Service     = "Mythic"
-    Role        = "C2"
+    Service     = each.key
     Provider    = "azure"
   }
 }
 
 # Outputs
 output "mythic_public_ip" {
-  description = "Public IP of Mythic VM"
-  value       = azurerm_public_ip.mythic.ip_address
+  value = azurerm_public_ip.pip["mythic"].ip_address
 }
-
-output "resource_group_name" {
-  description = "Resource group name"
-  value       = azurerm_resource_group.redteam.name
+output "gophish_public_ip" {
+  value = azurerm_public_ip.pip["gophish"].ip_address
+}
+output "evilginx_public_ip" {
+  value = azurerm_public_ip.pip["evilginx"].ip_address
+}
+output "pwndrop_public_ip" {
+  value = azurerm_public_ip.pip["pwndrop"].ip_address
 }
 '''
         
@@ -398,11 +400,6 @@ provider "google" {
 resource "google_compute_network" "redteam" {
   name                    = "${var.environment}-redteam-vpc"
   auto_create_subnetworks = "false"
-  
-  labels = {
-    environment = var.environment
-    provider    = "gcp"
-  }
 }
 
 # Subnets
@@ -412,11 +409,6 @@ resource "google_compute_subnetwork" "public" {
   ip_cidr_range = var.subnet_cidrs[count.index]
   region        = var.subnet_regions[count.index]
   network       = google_compute_network.redteam.id
-  
-  labels = {
-    environment = var.environment
-    provider    = "gcp"
-  }
 }
 
 # Firewall Rules
@@ -426,92 +418,67 @@ resource "google_compute_firewall" "redteam" {
   
   allow {
     protocol = "tcp"
-    ports    = ["22"]
-  }
-  
-  allow {
-    protocol = "tcp"
-    ports    = ["80"]
-  }
-  
-  allow {
-    protocol = "tcp"
-    ports    = ["443"]
+    ports    = ["22", "80", "443", "7443", "3333", "8080"]
   }
   
   source_ranges = ["${var.admin_ip}/32", "0.0.0.0/0"]
-  
-  target_tags = ["redteam"]
-  
-  labels = {
-    environment = var.environment
-    provider    = "gcp"
-  }
+  target_tags   = ["redteam"]
 }
 
-# Public IP
-resource "google_compute_address" "mythic" {
-  name = "${var.environment}-mythic-ip"
-  
-  labels = {
-    environment = var.environment
-    provider    = "gcp"
-  }
+# Service Instances
+resource "google_compute_address" "ip" {
+  for_each = var.machine_types
+  name     = "${var.environment}-${each.key}-ip"
 }
 
-# Compute Instance
-resource "google_compute_instance" "mythic" {
-  name         = "${var.environment}-mythic-vm"
-  machine_type = var.machine_types["mythic"]
+resource "google_compute_instance" "service" {
+  for_each     = var.machine_types
+  name         = "${var.environment}-${each.key}-vm"
+  machine_type = each.value
   zone         = "${var.gcp_region}-a"
   
   tags = ["redteam"]
   
   boot_disk {
     initialize_params {
-      image = data.google_compute_image.ubuntu.self_link
-      size  = 100
-      type  = "pd-balanced"
+      image = "ubuntu-os-cloud/ubuntu-2004-lts"
+      size  = 50
     }
   }
   
   network_interface {
     subnetwork = google_compute_subnetwork.public[0].id
     access_config {
-      nat_ip = google_compute_address.mythic.address
+      nat_ip = google_compute_address.ip[each.key].address
     }
   }
   
   metadata = {
     ssh-keys = "ubuntu:${file(var.ssh_public_key_path)}"
-    user-data = templatefile("${path.module}/templates/cloud-init-mythic.sh", {
-      hostname = "mythic-${var.environment}"
+    user-data = templatefile("${path.module}/templates/cloud-init-base.sh", {
+      hostname = "${each.key}-${var.environment}"
     })
   }
   
   labels = {
     environment = var.environment
-    service     = "mythic"
-    role        = "c2"
+    service     = each.key
     provider    = "gcp"
   }
 }
 
-# Data sources
-data "google_compute_image" "ubuntu" {
-  family  = "ubuntu-2004-lts"
-  project = "ubuntu-os-cloud"
-}
-
 # Outputs
 output "mythic_instance_ip" {
-  description = "Public IP of Mythic instance"
-  value       = google_compute_address.mythic.address
+  value = google_compute_address.ip["mythic"].address
 }
-
-output "instance_name" {
-  description = "Instance name"
-  value       = google_compute_instance.mythic.name
+output "gophish_instance_ip" {
+  value = google_compute_address.ip["gophish"].address
+}
+output "evilginx_instance_ip" {
+  value = google_compute_address.ip["evilginx"].address
+}
+output "pwndrop_instance_ip" {
+  value = google_compute_address.ip["pwndrop"].address
 }
 '''
         
@@ -690,6 +657,20 @@ variable "machine_types" {
         with open(os.path.join(output_dir, "variables.tf"), "w") as f:
             f.write(self.generate_variables_file())
         
+        # Create templates directory in output_dir
+        templates_dir = os.path.join(output_dir, "templates")
+        os.makedirs(templates_dir, exist_ok=True)
+        
+        # Copy cloud-init-base.sh to templates directory
+        # Find project root to locate the source template
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__)))
+        source_template = os.path.join(project_root, "templates/cloud-init-base.sh")
+        dest_template = os.path.join(templates_dir, "cloud-init-base.sh")
+        
+        import shutil
+        if os.path.exists(source_template):
+            shutil.copy2(source_template, dest_template)
+        
         print(f"Terraform configuration generated for {self.provider}")
         print(f"Files saved to: {output_dir}")
 
@@ -709,8 +690,9 @@ def main():
     generator = TerraformGenerator(provider)
     
     # Get output directory (should be called from cloud-configs/{provider}/terraform)
+    # We want to output to cloud-configs/{provider}/terraform
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    output_dir = os.path.dirname(script_dir)  # Go up one level to provider dir
+    output_dir = os.path.join(script_dir, "cloud-configs", provider, "terraform")
     
     generator.save_config(output_dir)
 

@@ -363,15 +363,12 @@ main() {
             
             # Deploy primary to AWS
             deploy_to_cloud "aws" "primary"
-            configure_services "aws" "primary"
             
             # Deploy backup to Azure
             deploy_to_cloud "azure" "backup"
-            configure_services "azure" "backup"
             
             # Deploy backup to GCP
             deploy_to_cloud "gcp" "backup"
-            configure_services "gcp" "backup"
             
             setup_monitoring
             ;;
@@ -379,7 +376,6 @@ main() {
             log "Starting single-cloud deployment to $CLOUD_PROVIDER..."
             
             deploy_to_cloud "$CLOUD_PROVIDER" "$DEPLOYMENT_MODE"
-            configure_services "$CLOUD_PROVIDER" "$DEPLOYMENT_MODE"
             setup_monitoring
             ;;
         *)
