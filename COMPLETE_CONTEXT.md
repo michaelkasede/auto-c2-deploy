@@ -1,5 +1,6 @@
 # Multi-Cloud Red Team Infrastructure - Complete Context & Configuration
 
+
 This document captures all important context, decisions, and configurations for the multi-cloud red team infrastructure project. Use this as a comprehensive reference when setting up a new workspace.
 
 ---

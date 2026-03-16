@@ -150,7 +150,7 @@ resource "aws_instance" "service" {
   subnet_id                   = aws_subnet.public[0].id
   vpc_security_group_ids      = [aws_security_group.redteam_base.id]
   key_name                    = var.ssh_key_name
-  associate_public_ip_address = true
+  associate_public_ip_address = each.key == "redirector" ? true : false
   
   user_data = templatefile("${path.module}/templates/cloud-init-base.sh", {
     hostname = "${each.key}-${var.environment}"
@@ -183,20 +183,20 @@ data "aws_availability_zones" "available" {
 }
 
 # Outputs
-output "mythic_instance_ip" {
-  value = aws_instance.service["mythic"].public_ip
-}
-output "gophish_instance_ip" {
-  value = aws_instance.service["gophish"].public_ip
-}
-output "evilginx_instance_ip" {
-  value = aws_instance.service["evilginx"].public_ip
-}
-output "pwndrop_instance_ip" {
-  value = aws_instance.service["pwndrop"].public_ip
-}
-output "redirector_instance_ip" {
+output "redirector_public_ip" {
   value = aws_instance.service["redirector"].public_ip
+}
+output "mythic_private_ip" {
+  value = aws_instance.service["mythic"].private_ip
+}
+output "gophish_private_ip" {
+  value = aws_instance.service["gophish"].private_ip
+}
+output "evilginx_private_ip" {
+  value = aws_instance.service["evilginx"].private_ip
+}
+output "pwndrop_private_ip" {
+  value = aws_instance.service["pwndrop"].private_ip
 }
 
 output "vpc_id" {
@@ -304,10 +304,10 @@ resource "azurerm_network_security_group" "redteam" {
   }
 }
 
-# Service Instances
-resource "azurerm_public_ip" "pip" {
-  for_each            = var.vm_sizes
-  name                = "${var.environment}-${each.key}-pip"
+# Only the Redirector gets a Public IP to stay within Azure limits (max 3)
+# and follow OPSEC best practices.
+resource "azurerm_public_ip" "redirector_pip" {
+  name                = "${var.environment}-redirector-pip"
   location            = azurerm_resource_group.redteam.location
   resource_group_name = azurerm_resource_group.redteam.name
   allocation_method   = "Static"
@@ -324,7 +324,8 @@ resource "azurerm_network_interface" "nic" {
     name                          = "internal"
     subnet_id                     = azurerm_subnet.public[0].id
     private_ip_address_allocation = "Dynamic"
-    public_ip_address_id          = azurerm_public_ip.pip[each.key].id
+    # Associate Public IP ONLY if it is the redirector
+    public_ip_address_id          = each.key == "redirector" ? azurerm_public_ip.redirector_pip.id : null
   }
 }
 
@@ -366,20 +367,20 @@ resource "azurerm_linux_virtual_machine" "service" {
 }
 
 # Outputs
-output "mythic_public_ip" {
-  value = azurerm_public_ip.pip["mythic"].ip_address
-}
-output "gophish_public_ip" {
-  value = azurerm_public_ip.pip["gophish"].ip_address
-}
-output "evilginx_public_ip" {
-  value = azurerm_public_ip.pip["evilginx"].ip_address
-}
-output "pwndrop_public_ip" {
-  value = azurerm_public_ip.pip["pwndrop"].ip_address
-}
 output "redirector_public_ip" {
-  value = azurerm_public_ip.pip["redirector"].ip_address
+  value = azurerm_public_ip.redirector_pip.ip_address
+}
+output "mythic_private_ip" {
+  value = azurerm_network_interface.nic["mythic"].private_ip_address
+}
+output "gophish_private_ip" {
+  value = azurerm_network_interface.nic["gophish"].private_ip_address
+}
+output "evilginx_private_ip" {
+  value = azurerm_network_interface.nic["evilginx"].private_ip_address
+}
+output "pwndrop_private_ip" {
+  value = azurerm_network_interface.nic["pwndrop"].private_ip_address
 }
 '''
         
@@ -431,10 +432,9 @@ resource "google_compute_firewall" "redteam" {
   target_tags   = ["redteam"]
 }
 
-# Service Instances
-resource "google_compute_address" "ip" {
-  for_each = var.machine_types
-  name     = "${var.environment}-${each.key}-ip"
+# Only Redirector gets static reserved IP
+resource "google_compute_address" "redirector_ip" {
+  name     = "${var.environment}-redirector-ip"
 }
 
 resource "google_compute_instance" "service" {
@@ -454,8 +454,12 @@ resource "google_compute_instance" "service" {
   
   network_interface {
     subnetwork = google_compute_subnetwork.public[0].id
-    access_config {
-      nat_ip = google_compute_address.ip[each.key].address
+    # Access config (Public IP) ONLY for redirector
+    dynamic "access_config" {
+      for_each = each.key == "redirector" ? [1] : []
+      content {
+        nat_ip = google_compute_address.redirector_ip.address
+      }
     }
   }
   
@@ -474,20 +478,20 @@ resource "google_compute_instance" "service" {
 }
 
 # Outputs
-output "mythic_instance_ip" {
-  value = google_compute_address.ip["mythic"].address
+output "redirector_public_ip" {
+  value = google_compute_address.redirector_ip.address
 }
-output "gophish_instance_ip" {
-  value = google_compute_address.ip["gophish"].address
+output "mythic_private_ip" {
+  value = google_compute_instance.service["mythic"].network_interface[0].network_ip
 }
-output "evilginx_instance_ip" {
-  value = google_compute_address.ip["evilginx"].address
+output "gophish_private_ip" {
+  value = google_compute_instance.service["gophish"].network_interface[0].network_ip
 }
-output "pwndrop_instance_ip" {
-  value = google_compute_address.ip["pwndrop"].address
+output "evilginx_private_ip" {
+  value = google_compute_instance.service["evilginx"].network_interface[0].network_ip
 }
-output "redirector_instance_ip" {
-  value = google_compute_address.ip["redirector"].address
+output "pwndrop_private_ip" {
+  value = google_compute_instance.service["pwndrop"].network_interface[0].network_ip
 }
 '''
         
@@ -495,6 +499,31 @@ output "redirector_instance_ip" {
     
     def generate_variables_file(self):
         """Generate variables file for the provider"""
+        common_vars = '''
+variable "stealth_mode" {
+  description = "Stealth mode level"
+  type        = string
+  default     = "high"
+}
+
+variable "deployment_mode" {
+  description = "Deployment mode"
+  type        = string
+  default     = "primary"
+}
+
+variable "enable_monitoring" {
+  description = "Enable monitoring services"
+  type        = bool
+  default     = false
+}
+
+variable "enable_centralized_logging" {
+  description = "Enable centralized logging"
+  type        = bool
+  default     = false
+}
+'''
         if self.provider == "aws":
             return '''variable "aws_region" {
   description = "AWS region for deployment"
@@ -540,12 +569,12 @@ variable "instance_types" {
     redirector = "t3.small"
   }
 }
-'''
+''' + common_vars
         elif self.provider == "azure":
             return '''variable "azure_region" {
   description = "Azure region for deployment"
   type        = string
-  default     = "eastus"
+  default     = "centralus"
 }
 
 variable "environment" {
@@ -593,7 +622,7 @@ variable "vm_sizes" {
     redirector = "Standard_D1s_v2"
   }
 }
-'''
+''' + common_vars
         elif self.provider == "gcp":
             return '''variable "gcp_project_id" {
   description = "GCP project ID"
@@ -645,7 +674,7 @@ variable "machine_types" {
     redirector = "e2-standard-1"
   }
 }
-'''
+''' + common_vars
     
     def save_config(self, output_dir: str):
         """Save Terraform configuration to files"""

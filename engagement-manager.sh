@@ -44,6 +44,16 @@ start_engagement() {
     read -p "Duration in days: " duration
     read -p "Cloud provider (aws/azure/gcp) [aws]: " cloud_provider
     cloud_provider=${cloud_provider:-aws}
+
+    if [[ "$cloud_provider" == "azure" ]]; then
+        read -p "Azure Region (e.g., centralus, westeurope) [centralus]: " cloud_region
+        cloud_region=${cloud_region:-centralus}
+    elif [[ "$cloud_provider" == "aws" ]]; then
+        read -p "AWS Region [us-east-1]: " cloud_region
+        cloud_region=${cloud_region:-us-east-1}
+    else
+        read -p "Cloud Region: " cloud_region
+    fi
     
     read -p "Stealth level (high/medium/low) [high]: " stealth_level
     stealth_level=${stealth_level:-high}
@@ -114,6 +124,7 @@ EOF
     
     # Set environment variables
     export CLOUD_PROVIDER="$cloud_provider"
+    export CLOUD_REGION="$cloud_region"
     export DEPLOYMENT_MODE="$deployment_mode"
     export STEALTH_MODE="$stealth_level"
     export ENVIRONMENT="$engagement_name"
@@ -158,36 +169,6 @@ print("Engagement updated with deployment info")
 PYEOF
     fi
     
-    # Generate access information
-    if [[ -f "access_info_${cloud_provider}_${deployment_mode}_stealth.json" ]]; then
-        cp "access_info_${cloud_provider}_${deployment_mode}_stealth.json" "$engagement_dir/access.json"
-        
-        # Update engagement file with access info
-        python3 << PYEOF
-import json
-
-engagement_file = "$CURRENT_ENGAGEMENT_FILE"
-access_file = "$engagement_dir/access.json"
-
-# Load current engagement data
-with open(engagement_file, 'r') as f:
-    engagement_data = json.load(f)
-
-# Load access data
-with open(access_file, 'r') as f:
-    access_data = json.load(f)
-
-# Update engagement with access info
-engagement_data['access_info'] = access_data
-
-# Save updated engagement data
-with open(engagement_file, 'w') as f:
-    json.dump(engagement_data, f, indent=2)
-
-print("Engagement updated with access info")
-PYEOF
-    fi
-    
     # Create engagement log
     cat > "$engagement_dir/engagement.log" << EOF
 Engagement: $engagement_name
@@ -202,7 +183,7 @@ Duration: $duration days
 $(cat "$engagement_dir/deployment.json" 2>/dev/null || echo "Deployment info not available")
 
 === Access Information ===
-$(cat "$engagement_dir/access.json" 2>/dev/null || echo "Access info not available")
+$(cat "$engagement_dir/current.json" 2>/dev/null || echo "Access info not available")
 
 === Engagement Timeline ===
 $(date): Engagement started
@@ -254,7 +235,7 @@ except:
     
     echo ""
     header "ENGAGEMENT ACTIVE"
-    echo "Access information: $engagement_dir/access.json"
+    echo "Access information: $engagement_dir/current.json"
     echo "Deployment logs: $engagement_dir/engagement.log"
     echo "Management commands:"
     echo "  Check status: $0 --status"
@@ -294,9 +275,10 @@ stop_engagement() {
         error "No active engagement found"
     fi
     
-    # Load engagement info
+    # Load engagement info using Python to avoid unbound variable issues
     local engagement_name=$(python3 -c "import json; print(json.load(open('$CURRENT_ENGAGEMENT_FILE')).get('engagement_name', 'unknown'))")
     local cloud_provider=$(python3 -c "import json; print(json.load(open('$CURRENT_ENGAGEMENT_FILE')).get('cloud_provider', 'unknown'))")
+    local deployment_mode=$(python3 -c "import json; print(json.load(open('$CURRENT_ENGAGEMENT_FILE')).get('deployment_mode', 'primary'))")
     local engagement_dir="$ENGAGEMENTS_DIR/$engagement_name"
     
     if [[ ! -d "$engagement_dir" ]]; then
@@ -307,6 +289,7 @@ stop_engagement() {
     echo "Current Engagement:"
     echo "- Name: $engagement_name"
     echo "- Cloud: $cloud_provider"
+    echo "- Mode: $deployment_mode"
     echo "- Status: Active"
     echo ""
     
@@ -316,12 +299,11 @@ stop_engagement() {
     fi
     
     engagement "Stopping $engagement_name"
-    log "Tearing down infrastructure on $cloud_provider"
     
     # Backup data before teardown
     backup_engagement_data "$engagement_name"
     
-    # Teardown infrastructure
+    log "Tearing down infrastructure on $cloud_provider"
     cd "$PROJECT_ROOT"
     
     if [[ -d "cloud-configs/$cloud_provider/terraform" ]]; then
@@ -329,7 +311,11 @@ stop_engagement() {
         
         if [[ -f "terraform.tfstate" ]]; then
             log "Destroying infrastructure on $cloud_provider..."
-            terraform destroy -auto-approve
+            # Provide necessary variables for destroy to succeed
+            terraform destroy -auto-approve \
+                -var="environment=$engagement_name" \
+                -var="deployment_mode=$deployment_mode" \
+                -var="admin_ip=127.0.0.1"
             
             # Move state file to engagement directory
             mv terraform.tfstate "$engagement_dir/"
@@ -346,6 +332,7 @@ stop_engagement() {
     # Update engagement status
     python3 << PYEOF
 import json
+from datetime import datetime
 
 engagement_file = "$CURRENT_ENGAGEMENT_FILE"
 
@@ -355,7 +342,7 @@ with open(engagement_file, 'r') as f:
 
 # Update engagement status
 engagement_data['status'] = 'stopped'
-engagement_data['end_time'] = $(date -Iseconds)
+engagement_data['end_time'] = datetime.now().isoformat()
 
 # Save updated engagement data
 with open(engagement_file, 'w') as f:
@@ -369,20 +356,6 @@ PYEOF
 $(date): Engagement stopped
 $(date): Infrastructure teardown completed
 $(date): Data backed up
-
-=== Engagement Summary ===
-Duration: $(python3 -c "
-import json
-with open('$CURRENT_ENGAGEMENT_FILE', 'r') as f:
-    data = json.load(f)
-    if 'start_time' in data and 'end_time' in data:
-        duration = int(data['end_time']) - int(data['start_time'])
-        hours = duration // 3600
-        minutes = (duration % 3600) // 60
-        print(f'{hours}h {minutes}m')
-    else:
-        print('Unknown')
-")
 EOF
     
     # Clear current engagement
@@ -395,7 +368,6 @@ EOF
     header "ENGAGEMENT STOPPED"
     echo "All data backed up to: $engagement_dir"
     echo "Engagement log: $engagement_dir/engagement.log"
-    echo "Infrastructure state: $engagement_dir/terraform.tfstate"
 }
 
 # Check engagement status
@@ -418,24 +390,25 @@ try:
     cloud = data.get('cloud_provider', 'Unknown')
     stealth = data.get('stealth_level', 'Unknown')
     
+    print(f"Status: {status.upper()}")
+    print(f"Name: {name}")
+    print(f"Client: {client}")
+    print(f"Cloud: {cloud}")
+    print(f"Stealth: {stealth}")
+    
     if 'start_time' in data:
-        start_time = datetime.fromtimestamp(int(data['start_time']))
-        duration = datetime.now() - start_time
-        hours = duration.total_seconds() // 3600
-        minutes = (duration.total_seconds() % 3600) // 60
-        
-        print(f"Status: {status.upper()}")
-        print(f"Name: {name}")
-        print(f"Client: {client}")
-        print(f"Cloud: {cloud}")
-        print(f"Stealth: {stealth}")
-        print(f"Duration: {int(hours)}h {int(minutes)}m")
+        try:
+            # Handle ISO format
+            start_time = datetime.fromisoformat(data['start_time'].replace('Z', '+00:00'))
+            duration = datetime.now().astimezone() - start_time
+            hours = duration.total_seconds() // 3600
+            minutes = (duration.total_seconds() % 3600) // 60
+            print(f"Duration: {int(hours)}h {int(minutes)}m")
+        except:
+            print(f"Started: {data['start_time']}")
         
         if status == 'active':
             print(f"Engagement directory: engagements/{name}")
-            print("Access file: engagements/{name}/access.json")
-        else:
-            print("Engagement is not active")
     
 except Exception as e:
     print(f"Error reading engagement data: {e}")
@@ -467,6 +440,15 @@ backup_engagement_data() {
         error "Engagement directory not found: $engagement_dir"
     fi
     
+    # Load metadata from current file if available, otherwise from engagement_dir
+    local current_file="$CURRENT_ENGAGEMENT_FILE"
+    if [[ ! -f "$current_file" ]]; then
+        current_file="$engagement_dir/engagement.json"
+    fi
+
+    local cloud_provider=$(python3 -c "import json; print(json.load(open('$current_file')).get('cloud_provider', 'unknown'))")
+    local deployment_mode=$(python3 -c "import json; print(json.load(open('$current_file')).get('deployment_mode', 'primary'))")
+
     local timestamp=$(date +%Y%m%d_%H%M%S)
     local backup_file="$backup_dir/${engagement_name}_backup_${timestamp}.tar.gz"
     
@@ -475,7 +457,7 @@ backup_engagement_data() {
     # Create backup
     tar -czf "$backup_file" -C "$ENGAGEMENTS_DIR" "$engagement_name"
     
-    # Backup current infrastructure state
+    # Backup current infrastructure outputs
     if [[ -f "outputs/${cloud_provider}_${deployment_mode}.json" ]]; then
         cp "outputs/${cloud_provider}_${deployment_mode}.json" "$backup_dir/${engagement_name}_deployment_${timestamp}.json"
     fi
@@ -496,7 +478,14 @@ list_engagements() {
     for dir in "$ENGAGEMENTS_DIR"/*; do
         if [[ -d "$dir" ]]; then
             basename=$(basename "$dir")
+            local json_file=""
             if [[ -f "$dir/engagement.json" ]]; then
+                json_file="$dir/engagement.json"
+            elif [[ -f "$dir/current.json" ]]; then
+                json_file="$dir/current.json"
+            fi
+
+            if [[ -n "$json_file" ]]; then
                 echo ""
                 echo "=== $basename ==="
                 python3 << PYEOF
@@ -504,28 +493,20 @@ import json
 from datetime import datetime
 
 try:
-    with open('$dir/engagement.json', 'r') as f:
+    with open('$json_file', 'r') as f:
         data = json.load(f)
     
-    name = data.get('engagement_name', 'Unknown')
     client = data.get('client_name', 'Unknown')
     status = data.get('status', 'Unknown')
     cloud = data.get('cloud_provider', 'Unknown')
     stealth = data.get('stealth_level', 'Unknown')
     
+    print(f"Client: {client}")
+    print(f"Cloud: {cloud}")
+    print(f"Status: {status.upper()}")
+    
     if 'start_time' in data:
-        start_time = datetime.fromtimestamp(int(data['start_time']))
-        print(f"Client: {client}")
-        print(f"Started: {start_time.strftime('%Y-%m-%d %H:%M')}")
-        print(f"Cloud: {cloud}")
-        print(f"Stealth: {stealth}")
-        print(f"Status: {status.upper()}")
-        
-        if 'end_time' in data:
-            end_time = datetime.fromtimestamp(int(data['end_time']))
-            print(f"Ended: {end_time.strftime('%Y-%m-%d %H:%M')}")
-        else:
-            print("Duration: Active")
+        print(f"Started: {data['start_time']}")
     
 except Exception as e:
     print(f"Error reading engagement data: {e}")
@@ -548,34 +529,18 @@ show_usage() {
     echo "  list               List past engagements"
     echo "  backup             Backup current engagement data"
     echo "  help               Show this help"
-    echo ""
-    echo "Examples:"
-    echo "  $0 start                    # Start new engagement (interactive)"
-    echo "  $0 --status                  # Check current status"
-    echo "  $0 stop                     # Stop current engagement"
-    echo "  $0 list                     # List all engagements"
 }
 
 # Main function
 main() {
-    # Setup directories
     setup_directories
     
-    # Parse command line arguments
     case "${1:-}" in
-        start|"")
-            start_engagement
-            ;;
-        stop|"")
-            stop_engagement
-            ;;
-        --status|status|"")
-            check_status
-            ;;
-        list|"")
-            list_engagements
-            ;;
-        --backup|backup|"")
+        start) start_engagement ;;
+        stop) stop_engagement ;;
+        status|--status) check_status ;;
+        list) list_engagements ;;
+        backup|--backup)
             if [[ -f "$CURRENT_ENGAGEMENT_FILE" ]]; then
                 engagement_name=$(python3 -c "import json; print(json.load(open('$CURRENT_ENGAGEMENT_FILE')).get('engagement_name', 'unknown'))")
                 backup_engagement_data "$engagement_name"
@@ -583,15 +548,9 @@ main() {
                 error "No active engagement to backup"
             fi
             ;;
-        --help|help|"-h"|"-")
-            show_usage
-            ;;
-        *)
-            show_usage
-            error "Unknown command: $1"
-            ;;
+        --help|help|"-h") show_usage ;;
+        *) show_usage; error "Unknown command: ${1:-none}" ;;
     esac
 }
 
-# Run main function
 main "$@"
