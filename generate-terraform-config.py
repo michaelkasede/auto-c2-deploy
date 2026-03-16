@@ -195,6 +195,9 @@ output "evilginx_instance_ip" {
 output "pwndrop_instance_ip" {
   value = aws_instance.service["pwndrop"].public_ip
 }
+output "redirector_instance_ip" {
+  value = aws_instance.service["redirector"].public_ip
+}
 
 output "vpc_id" {
   description = "VPC ID"
@@ -375,6 +378,9 @@ output "evilginx_public_ip" {
 output "pwndrop_public_ip" {
   value = azurerm_public_ip.pip["pwndrop"].ip_address
 }
+output "redirector_public_ip" {
+  value = azurerm_public_ip.pip["redirector"].ip_address
+}
 '''
         
         return config
@@ -480,6 +486,9 @@ output "evilginx_instance_ip" {
 output "pwndrop_instance_ip" {
   value = google_compute_address.ip["pwndrop"].address
 }
+output "redirector_instance_ip" {
+  value = google_compute_address.ip["redirector"].address
+}
 '''
         
         return config
@@ -528,6 +537,7 @@ variable "instance_types" {
     gophish   = "t3.medium"
     evilginx  = "t3.medium"
     pwndrop   = "t3.small"
+    redirector = "t3.small"
   }
 }
 '''
@@ -580,6 +590,7 @@ variable "vm_sizes" {
     gophish   = "Standard_D2s_v3"
     evilginx  = "Standard_D2s_v3"
     pwndrop   = "Standard_D1s_v2"
+    redirector = "Standard_D1s_v2"
   }
 }
 '''
@@ -631,6 +642,7 @@ variable "machine_types" {
     gophish   = "e2-standard-2"
     evilginx  = "e2-standard-2"
     pwndrop   = "e2-standard-1"
+    redirector = "e2-standard-1"
   }
 }
 '''

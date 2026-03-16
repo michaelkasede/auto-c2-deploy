@@ -1,0 +1,53 @@
+---
+- name: Install Nginx
+  apt:
+    name: nginx
+    state: present
+
+- name: Install Certbot
+  apt:
+    name:
+      - certbot
+      - python3-certbot-nginx
+    state: present
+
+- name: Request SSL Certificates
+  command: >
+    certbot certonly --nginx -d {{ base_domain }}
+    --non-interactive --agree-tos --email admin@{{ base_domain }}
+  args:
+    creates: "/etc/letsencrypt/live/{{ base_domain }}/fullchain.pem"
+
+- name: Create decoy directory
+  file:
+    path: /opt/decoy
+    state: directory
+    mode: '0755'
+
+- name: Deploy Decoy docker-compose
+  template:
+    src: decoy-docker-compose.yml.j2
+    dest: /opt/decoy/docker-compose.yml
+
+- name: Start Decoy container
+  community.docker.docker_compose:
+    project_src: /opt/decoy
+    state: present
+
+- name: Deploy Smart Redirector configuration
+  template:
+    src: smart-redirector.conf.j2
+    dest: /etc/nginx/sites-available/aegis-redirector.conf
+  notify: Reload Nginx
+
+- name: Enable Smart Redirector
+  file:
+    src: /etc/nginx/sites-available/aegis-redirector.conf
+    dest: /etc/nginx/sites-enabled/aegis-redirector.conf
+    state: link
+
+- name: Remove default Nginx site
+  file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Reload Nginx

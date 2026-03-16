@@ -32,8 +32,20 @@ def get_inventory(engagement_file):
         }
     }
 
-    services = ["mythic", "gophish", "evilginx", "pwndrop"]
+    services = ["mythic", "gophish", "evilginx", "pwndrop", "redirector"]
     
+    # Get base domain
+    base_domain = engagement_data.get('access_info', {}).get('base_domain', 'example.com')
+    
+    inventory["all"]["vars"].update({
+        "base_domain": base_domain,
+        "decoy_domain": base_domain,
+        "c2_domain": f"api.{base_domain}",
+        "mail_domain": f"mail.{base_domain}",
+        "login_domain": f"login.{base_domain}",
+        "cdn_domain": f"cdn.{base_domain}"
+    })
+
     for service in services:
         # Check for both AWS and Azure/GCP output formats
         ip = None

@@ -1,0 +1,106 @@
+# Aegis Centralized Smart Redirector
+# Entry point for all infrastructure traffic
+
+# Upstream definitions (Internal communication)
+upstream mythic_backend {
+    server {{ hostvars[groups['mythic'][0]]['ansible_host'] }}:7443;
+}
+
+upstream gophish_backend {
+    server {{ hostvars[groups['gophish'][0]]['ansible_host'] }}:3333;
+}
+
+upstream evilginx_backend {
+    server {{ hostvars[groups['evilginx'][0]]['ansible_host'] }}:443;
+}
+
+upstream pwndrop_backend {
+    server {{ hostvars[groups['pwndrop'][0]]['ansible_host'] }}:8080;
+}
+
+# 1. Main Decoy / Base Domain (e.g., zoom-meeting.duckdns.org)
+server {
+    listen 80;
+    listen 443 ssl;
+    server_name {{ base_domain }};
+
+    ssl_certificate /etc/letsencrypt/live/{{ base_domain }}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{{ base_domain }}/privkey.pem;
+
+    location / {
+        # Host the decoy container locally on the redirector
+        proxy_pass http://localhost:8080; 
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        add_header X-Aegis-Filter "Decoy-Frontend";
+    }
+}
+
+# 2. C2 Redirector (api.*)
+server {
+    listen 443 ssl;
+    server_name {{ c2_domain }};
+
+    ssl_certificate /etc/letsencrypt/live/{{ base_domain }}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{{ base_domain }}/privkey.pem;
+
+    # Mythic C2 Callback Paths
+    location ~ ^({{ mythic_callback_paths | join('|') }}) {
+        proxy_pass https://mythic_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        add_header X-Aegis-Filter "C2-Access";
+    }
+
+    # Everything else on api.* goes to decoy
+    location / {
+        proxy_pass http://localhost:8080;
+        add_header X-Aegis-Filter "C2-Blocked";
+    }
+}
+
+# 3. Phishing Entry (mail.*)
+server {
+    listen 443 ssl;
+    server_name {{ mail_domain }};
+
+    ssl_certificate /etc/letsencrypt/live/{{ base_domain }}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{{ base_domain }}/privkey.pem;
+
+    location / {
+        proxy_pass http://gophish_backend;
+        proxy_set_header Host $host;
+        add_header X-Aegis-Filter "Phish-Entry";
+    }
+}
+
+# 4. Login Landing (login.*)
+server {
+    listen 443 ssl;
+    server_name {{ login_domain }};
+
+    ssl_certificate /etc/letsencrypt/live/{{ base_domain }}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{{ base_domain }}/privkey.pem;
+
+    location / {
+        proxy_pass https://evilginx_backend;
+        proxy_set_header Host $host;
+        proxy_ssl_verify off; # Evilginx uses its own certs
+        add_header X-Aegis-Filter "Login-Landing";
+    }
+}
+
+# 5. Payload Delivery (cdn.*)
+server {
+    listen 443 ssl;
+    server_name {{ cdn_domain }};
+
+    ssl_certificate /etc/letsencrypt/live/{{ base_domain }}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{{ base_domain }}/privkey.pem;
+
+    location / {
+        proxy_pass http://pwndrop_backend;
+        proxy_set_header Host $host;
+        add_header X-Aegis-Filter "Payload-Delivery";
+    }
+}

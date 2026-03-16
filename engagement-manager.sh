@@ -50,6 +50,10 @@ start_engagement() {
     
     read -p "Deployment mode (primary/backup) [primary]: " deployment_mode
     deployment_mode=${deployment_mode:-primary}
+
+    echo ""
+    header "DOMAIN CONFIGURATION"
+    read -p "Base Domain (e.g., zoom-meeting.duckdns.org): " base_domain
     
     # Confirmation
     echo ""
@@ -60,6 +64,12 @@ start_engagement() {
     echo "- Cloud: $cloud_provider"
     echo "- Stealth: $stealth_level"
     echo "- Mode: $deployment_mode"
+    echo "- Base Domain: $base_domain"
+    echo "  -> Decoy: $base_domain"
+    echo "  -> C2 Endpoint: api.$base_domain"
+    echo "  -> Mail: mail.$base_domain"
+    echo "  -> Login: login.$base_domain"
+    echo "  -> Payload: cdn.$base_domain"
     echo ""
     
     read -p "Start engagement? [y/N]: " confirm
@@ -79,7 +89,16 @@ start_engagement() {
   "deployment_mode": "$deployment_mode",
   "status": "active",
   "infrastructure": {},
-  "access_info": {}
+  "access_info": {
+    "base_domain": "$base_domain",
+    "services": {
+      "mythic": { "domain": "api.$base_domain" },
+      "gophish": { "domain": "mail.$base_domain" },
+      "pwndrop": { "domain": "cdn.$base_domain" },
+      "evilginx": { "domain": "login.$base_domain" },
+      "redirector": { "domain": "$base_domain" }
+    }
+  }
 }
 EOF
     
@@ -191,6 +210,43 @@ EOF
     
     engagement "Infrastructure deployed successfully"
     
+    # Pause for DNS update
+    echo ""
+    header "ACTION REQUIRED: UPDATE DNS"
+    
+    # Try to extract the redirector IP from deployment.json
+    redirector_ip=$(python3 -c "
+import json
+import os
+try:
+    with open('$engagement_dir/deployment.json', 'r') as f:
+        data = json.load(f)
+        # Check various possible output keys
+        ip = data.get('redirector_public_ip', {}).get('value') or \
+             data.get('redirector_instance_ip', {}).get('value') or \
+             data.get('redirector_ip', {}).get('value', 'NOT_FOUND')
+        print(ip)
+except:
+    print('NOT_FOUND')
+")
+
+    if [[ "$redirector_ip" != "NOT_FOUND" ]]; then
+        info "Redirector Public IP: $redirector_ip"
+        echo "Please update your DuckDNS or Domain records now:"
+        echo "  * -> $redirector_ip"
+        echo "  @ -> $redirector_ip"
+        echo "  api -> $redirector_ip"
+        echo "  mail -> $redirector_ip"
+        echo "  login -> $redirector_ip"
+        echo "  cdn -> $redirector_ip"
+    else
+        warn "Could not automatically determine Redirector IP. Please check outputs/ folder."
+    fi
+    
+    echo ""
+    read -p "Press [Enter] after DNS has been updated and propagated to continue with Ansible configuration..."
+    echo ""
+
     # Run Ansible configuration
     ansible_deployment "$engagement_name"
     
