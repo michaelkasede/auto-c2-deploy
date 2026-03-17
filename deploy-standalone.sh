@@ -191,10 +191,17 @@ deploy_to_cloud() {
     terraform init
     
     # Create terraform.tfvars
+    # Note: Some providers (e.g., Azure NSG rules) require CIDR notation.
+    admin_ip="$(curl -s ifconfig.me 2>/dev/null || echo "127.0.0.1")"
+    if [[ "$admin_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        admin_ip="${admin_ip}/32"
+    fi
+    ssh_public_key_path="${SSH_PUBLIC_KEY_PATH:-$HOME/.ssh/id_rsa.pub}"
     cat > terraform.tfvars << EOF
 environment = "$ENVIRONMENT"
 deployment_mode = "$mode"
-admin_ip = "$(curl -s ifconfig.me 2>/dev/null || echo "127.0.0.1")"
+admin_ip = "$admin_ip"
+ssh_public_key_path = "$ssh_public_key_path"
 EOF
     
     # Plan and apply

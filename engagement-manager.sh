@@ -64,6 +64,15 @@ start_engagement() {
     echo ""
     header "DOMAIN CONFIGURATION"
     read -p "Base Domain (e.g., zoom-meeting.duckdns.org): " base_domain
+
+    echo ""
+    header "OPERATOR ACCESS (ALLOWLIST)"
+    default_operator_ip="$(curl -s ifconfig.me 2>/dev/null || echo "")"
+    if [[ -n "$default_operator_ip" && "$default_operator_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        default_operator_ip="${default_operator_ip}/32"
+    fi
+    read -p "Operator source IPs/CIDRs (comma-separated) [${default_operator_ip}]: " operator_allowlist_raw
+    operator_allowlist_raw=${operator_allowlist_raw:-$default_operator_ip}
     
     # Confirmation
     echo ""
@@ -75,11 +84,13 @@ start_engagement() {
     echo "- Stealth: $stealth_level"
     echo "- Mode: $deployment_mode"
     echo "- Base Domain: $base_domain"
+    echo "- Operator allowlist: ${operator_allowlist_raw:-NONE}"
     echo "  -> Decoy: $base_domain"
     echo "  -> C2 Endpoint: api.$base_domain"
     echo "  -> Mail: mail.$base_domain"
     echo "  -> Login: login.$base_domain"
     echo "  -> Payload: cdn.$base_domain"
+    echo "  -> Operator Portal: ops.$base_domain"
     echo ""
     
     read -p "Start engagement? [y/N]: " confirm
@@ -88,6 +99,19 @@ start_engagement() {
     fi
     
     # Save engagement configuration
+    # Convert allowlist string to JSON array
+    operator_allowlist_json=$(OPERATOR_ALLOWLIST_RAW="$operator_allowlist_raw" python3 - <<'PYEOF'
+import json, os, sys
+raw = os.environ.get("OPERATOR_ALLOWLIST_RAW", "").strip()
+items = []
+for part in raw.split(","):
+    part = part.strip()
+    if part:
+        items.append(part)
+print(json.dumps(items))
+PYEOF
+)
+
     cat > "$CURRENT_ENGAGEMENT_FILE" << EOF
 {
   "engagement_name": "$engagement_name",
@@ -97,6 +121,7 @@ start_engagement() {
   "cloud_provider": "$cloud_provider",
   "stealth_level": "$stealth_level",
   "deployment_mode": "$deployment_mode",
+  "operator_allowlist": $operator_allowlist_json,
   "status": "active",
   "infrastructure": {},
   "access_info": {
@@ -106,7 +131,8 @@ start_engagement() {
       "gophish": { "domain": "mail.$base_domain" },
       "pwndrop": { "domain": "cdn.$base_domain" },
       "evilginx": { "domain": "login.$base_domain" },
-      "redirector": { "domain": "$base_domain" }
+      "redirector": { "domain": "$base_domain" },
+      "operator_portal": { "domain": "ops.$base_domain" }
     }
   }
 }
@@ -211,17 +237,31 @@ except:
     print('NOT_FOUND')
 ")
 
-    if [[ "$redirector_ip" != "NOT_FOUND" ]]; then
-        info "Redirector Public IP: $redirector_ip"
-        echo "Please update your DuckDNS or Domain records now:"
+    # Always prompt for operator confirmation/input (Azure users often copy this from portal).
+    if [[ "$redirector_ip" == "NOT_FOUND" ]]; then
+        warn "Could not automatically determine Redirector Public IP from deployment outputs."
+        redirector_ip=""
+    else
+        info "Detected Redirector Public IP: $redirector_ip"
+    fi
+
+    echo ""
+    read -p "Enter Redirector Public IP (Azure Public IP) [${redirector_ip}]: " redirector_ip_input
+    redirector_ip_input=${redirector_ip_input:-$redirector_ip}
+
+    if [[ -z "${redirector_ip_input:-}" ]]; then
+        warn "Redirector Public IP not provided. Please check outputs/ and update DNS manually."
+    else
+        redirector_ip="$redirector_ip_input"
+        info "Using Redirector Public IP: $redirector_ip"
+        echo "Please update your DNS records now (all point to redirector):"
         echo "  * -> $redirector_ip"
         echo "  @ -> $redirector_ip"
         echo "  api -> $redirector_ip"
         echo "  mail -> $redirector_ip"
         echo "  login -> $redirector_ip"
         echo "  cdn -> $redirector_ip"
-    else
-        warn "Could not automatically determine Redirector IP. Please check outputs/ folder."
+        echo "  ops -> $redirector_ip"
     fi
     
     echo ""
@@ -315,7 +355,8 @@ stop_engagement() {
             terraform destroy -auto-approve \
                 -var="environment=$engagement_name" \
                 -var="deployment_mode=$deployment_mode" \
-                -var="admin_ip=127.0.0.1"
+                -var="admin_ip=127.0.0.1/32" \
+                -var="ssh_public_key_path=$HOME/.ssh/id_rsa.pub"
             
             # Move state file to engagement directory
             mv terraform.tfstate "$engagement_dir/"

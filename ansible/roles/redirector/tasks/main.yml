@@ -13,7 +13,13 @@
 
 - name: Request SSL Certificates
   command: >
-    certbot certonly --nginx -d {{ base_domain }}
+    certbot certonly --nginx
+    -d {{ base_domain }}
+    -d {{ c2_domain }}
+    -d {{ mail_domain }}
+    -d {{ login_domain }}
+    -d {{ cdn_domain }}
+    -d ops.{{ base_domain }}
     --non-interactive --agree-tos --email admin@{{ base_domain }}
   args:
     creates: "/etc/letsencrypt/live/{{ base_domain }}/fullchain.pem"

@@ -8,6 +8,7 @@ This document captures all important context, decisions, and configurations for 
 ## 🎯 Project Overview
 
 ### **Primary Objective**
+This is a capstone project for my course in defense evasion. 
 Create a standalone, stealth-enhanced multi-cloud deployment solution for red team operations with complete engagement lifecycle management.
 
 ### **Key Requirements**

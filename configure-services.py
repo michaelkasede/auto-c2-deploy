@@ -8,6 +8,7 @@ import sys
 import os
 import subprocess
 import logging
+import shlex
 from typing import Dict, Any, List
 
 # Configure logging
@@ -20,6 +21,9 @@ class ServiceConfigurator:
         self.mode = mode.lower()
         self.outputs_file = outputs_file
         self.outputs = self._load_outputs()
+        self.ssh_key_path = os.path.expanduser(
+            os.environ.get("SSH_KEY_PATH", "~/.ssh/id_rsa")
+        )
         
     def _load_outputs(self) -> Dict[str, Any]:
         """Load Terraform outputs from JSON file"""
@@ -63,8 +67,21 @@ class ServiceConfigurator:
     
     def ssh_command(self, ip: str, command: str) -> bool:
         """Execute SSH command on remote instance"""
-        ssh_key = "~/.ssh/redteam-key"
-        ssh_cmd = f"ssh -i {ssh_key} -o StrictHostKeyChecking=no -o ConnectTimeout=30 ubuntu@{ip} '{command}'"
+        if not os.path.exists(self.ssh_key_path):
+            logger.error(
+                f"SSH private key not found at {self.ssh_key_path}. "
+                f"Set SSH_KEY_PATH or create the key before configuring services."
+            )
+            return False
+
+        ssh_cmd = (
+            "ssh "
+            f"-i {shlex.quote(self.ssh_key_path)} "
+            "-o StrictHostKeyChecking=no "
+            "-o ConnectTimeout=30 "
+            f"ubuntu@{shlex.quote(ip)} "
+            f"{shlex.quote(command)}"
+        )
         
         try:
             result = subprocess.run(ssh_cmd, shell=True, capture_output=True, text=True, timeout=300)
@@ -165,7 +182,7 @@ class ServiceConfigurator:
             # Install Go
             "wget https://go.dev/dl/go1.21.0.linux-amd64.tar.gz",
             "sudo tar -C /usr/local -xzf go1.21.0.linux-amd64.tar.gz",
-            "echo 'export PATH=\$PATH:/usr/local/go/bin' >> ~/.bashrc",
+            "echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc",
             "source ~/.bashrc",
             
             # Clone and build Evilginx

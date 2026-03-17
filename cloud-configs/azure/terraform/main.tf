@@ -16,7 +16,7 @@ provider "azurerm" {
 resource "azurerm_resource_group" "redteam" {
   name     = "${var.environment}-redteam-rg"
   location = var.azure_region
-  
+
   tags = {
     Environment = var.environment
     Provider    = "azure"
@@ -29,7 +29,7 @@ resource "azurerm_virtual_network" "redteam" {
   address_space       = [var.vnet_address_space]
   location            = azurerm_resource_group.redteam.location
   resource_group_name = azurerm_resource_group.redteam.name
-  
+
   tags = {
     Environment = var.environment
     Provider    = "azure"
@@ -50,7 +50,7 @@ resource "azurerm_network_security_group" "redteam" {
   name                = "${var.environment}-redteam-nsg"
   location            = azurerm_resource_group.redteam.location
   resource_group_name = azurerm_resource_group.redteam.name
-  
+
   security_rule {
     name                       = "SSH"
     priority                   = 100
@@ -62,7 +62,21 @@ resource "azurerm_network_security_group" "redteam" {
     source_address_prefix      = var.admin_ip
     destination_address_prefix = "*"
   }
-  
+
+  # Allow SSH within the VNet so the redirector can reach private services
+  # (and so Ansible can ProxyJump via the redirector).
+  security_rule {
+    name                       = "SSH-VNET"
+    priority                   = 105
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "22"
+    source_address_prefix      = var.vnet_address_space
+    destination_address_prefix = "*"
+  }
+
   security_rule {
     name                       = "HTTP"
     priority                   = 110
@@ -74,7 +88,7 @@ resource "azurerm_network_security_group" "redteam" {
     source_address_prefix      = "*"
     destination_address_prefix = "*"
   }
-  
+
   security_rule {
     name                       = "HTTPS"
     priority                   = 120
@@ -86,21 +100,26 @@ resource "azurerm_network_security_group" "redteam" {
     source_address_prefix      = "*"
     destination_address_prefix = "*"
   }
-  
+
   tags = {
     Environment = var.environment
     Provider    = "azure"
   }
 }
 
-# Service Instances
-resource "azurerm_public_ip" "pip" {
-  for_each            = var.vm_sizes
-  name                = "${var.environment}-${each.key}-pip"
+# Apply NSG to the subnet used by all VMs.
+resource "azurerm_subnet_network_security_group_association" "public_nsg" {
+  subnet_id                 = azurerm_subnet.public[0].id
+  network_security_group_id = azurerm_network_security_group.redteam.id
+}
+
+# Public IP only for the redirector (single exposed entry point).
+resource "azurerm_public_ip" "redirector_pip" {
+  name                = "${var.environment}-redirector-pip"
   location            = azurerm_resource_group.redteam.location
   resource_group_name = azurerm_resource_group.redteam.name
   allocation_method   = "Static"
-  sku                = "Standard"
+  sku                 = "Standard"
 }
 
 resource "azurerm_network_interface" "nic" {
@@ -108,12 +127,12 @@ resource "azurerm_network_interface" "nic" {
   name                = "${var.environment}-${each.key}-nic"
   location            = azurerm_resource_group.redteam.location
   resource_group_name = azurerm_resource_group.redteam.name
-  
+
   ip_configuration {
     name                          = "internal"
     subnet_id                     = azurerm_subnet.public[0].id
     private_ip_address_allocation = "Dynamic"
-    public_ip_address_id          = azurerm_public_ip.pip[each.key].id
+    public_ip_address_id          = each.key == "redirector" ? azurerm_public_ip.redirector_pip.id : null
   }
 }
 
@@ -124,29 +143,29 @@ resource "azurerm_linux_virtual_machine" "service" {
   resource_group_name   = azurerm_resource_group.redteam.name
   network_interface_ids = [azurerm_network_interface.nic[each.key].id]
   size                  = each.value
-  
+
   admin_username = "ubuntu"
   admin_ssh_key {
     username   = "ubuntu"
     public_key = file(var.ssh_public_key_path)
   }
-  
+
   os_disk {
     caching              = "ReadWrite"
     storage_account_type = "Premium_LRS"
   }
-  
+
   source_image_reference {
     publisher = "Canonical"
     offer     = "UbuntuServer"
     sku       = "20.04-LTS"
     version   = "latest"
   }
-  
+
   custom_data = base64encode(templatefile("${path.module}/templates/cloud-init-base.sh", {
     hostname = "${each.key}-${var.environment}"
   }))
-  
+
   tags = {
     Environment = var.environment
     Service     = each.key
@@ -155,18 +174,18 @@ resource "azurerm_linux_virtual_machine" "service" {
 }
 
 # Outputs
-output "mythic_public_ip" {
-  value = azurerm_public_ip.pip["mythic"].ip_address
-}
-output "gophish_public_ip" {
-  value = azurerm_public_ip.pip["gophish"].ip_address
-}
-output "evilginx_public_ip" {
-  value = azurerm_public_ip.pip["evilginx"].ip_address
-}
-output "pwndrop_public_ip" {
-  value = azurerm_public_ip.pip["pwndrop"].ip_address
-}
 output "redirector_public_ip" {
-  value = azurerm_public_ip.pip["redirector"].ip_address
+  value = azurerm_public_ip.redirector_pip.ip_address
+}
+output "mythic_private_ip" {
+  value = azurerm_network_interface.nic["mythic"].private_ip_address
+}
+output "gophish_private_ip" {
+  value = azurerm_network_interface.nic["gophish"].private_ip_address
+}
+output "evilginx_private_ip" {
+  value = azurerm_network_interface.nic["evilginx"].private_ip_address
+}
+output "pwndrop_private_ip" {
+  value = azurerm_network_interface.nic["pwndrop"].private_ip_address
 }

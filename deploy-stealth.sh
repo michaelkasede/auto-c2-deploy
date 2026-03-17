@@ -129,7 +129,14 @@ generate_stealth_terraform() {
     local mode="$2"
     log "Generating stealth-enhanced Terraform configuration for $provider..."
     cd "cloud-configs/$provider/terraform"
-    python3 "$PROJECT_ROOT/generate-terraform-config.py" "$provider"
+    # Only (re)generate if configuration is missing.
+    # This repo may ship provider configs that differ from the generator defaults
+    # (e.g., Azure assigning public IPs to all service VMs for easier bootstrap).
+    if [[ ! -f "main.tf" ]]; then
+        python3 "$PROJECT_ROOT/generate-terraform-config.py" "$provider"
+    else
+        info "Terraform config already exists for $provider; skipping regeneration"
+    fi
     
     # AWS-specific stealth security groups (ONLY if provider is AWS)
     if [[ "$provider" == "aws" ]]; then
@@ -160,10 +167,20 @@ deploy_to_cloud() {
     log "Deploying stealth-enhanced infrastructure to $provider in $mode mode..."
     cd "cloud-configs/$provider/terraform"
     terraform init
+
+    # Provider-independent tfvars with sane defaults.
+    # Azure NSG `source_address_prefix` expects CIDR notation.
+    admin_ip="$(curl -s ifconfig.me 2>/dev/null || echo "127.0.0.1")"
+    if [[ "$admin_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        admin_ip="${admin_ip}/32"
+    fi
+    ssh_public_key_path="${SSH_PUBLIC_KEY_PATH:-$HOME/.ssh/id_rsa.pub}"
+
     cat > terraform.tfvars << EOF
 environment = "$ENVIRONMENT"
 deployment_mode = "$mode"
-admin_ip = "$(curl -s ifconfig.me 2>/dev/null || echo "127.0.0.1")"
+admin_ip = "$admin_ip"
+ssh_public_key_path = "$ssh_public_key_path"
 azure_region = "${CLOUD_REGION:-centralus}"
 stealth_mode = "$STEALTH_MODE"
 enable_monitoring = $([ "$STEALTH_MODE" = "low" ] && echo "true" || echo "false")

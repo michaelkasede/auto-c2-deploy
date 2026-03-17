@@ -17,6 +17,7 @@ def get_inventory(engagement_file):
 
     infrastructure = engagement_data.get('infrastructure', {})
     stealth_level = engagement_data.get('stealth_level', 'high')
+    operator_allowlist = engagement_data.get('operator_allowlist', [])
     
     inventory = {
         "_meta": {
@@ -25,9 +26,14 @@ def get_inventory(engagement_file):
         "all": {
             "vars": {
                 "ansible_user": "ubuntu",
-                "ansible_ssh_private_key_file": "~/.ssh/redteam-key",
+                # Prefer SSH_KEY_PATH if set; otherwise use common default key.
+                # Note: Ansible expands ~, but we normalize here for clarity.
+                "ansible_ssh_private_key_file": os.path.expanduser(
+                    os.environ.get("SSH_KEY_PATH", "~/.ssh/id_rsa")
+                ),
                 "ansible_ssh_common_args": "-o StrictHostKeyChecking=no",
-                "stealth_level": stealth_level
+                "stealth_level": stealth_level,
+                "operator_allowlist": operator_allowlist
             }
         }
     }
@@ -46,17 +52,30 @@ def get_inventory(engagement_file):
         "cdn_domain": f"cdn.{base_domain}"
     })
 
+    # Determine redirector public IP (used as bastion/ProxyJump).
+    redirector_public_ip = None
+    for key in ("redirector_public_ip", "redirector_instance_ip", "redirector_ip"):
+        val = infrastructure.get(key)
+        if isinstance(val, dict):
+            val = val.get("value")
+        if val:
+            redirector_public_ip = val
+            break
+
     for service in services:
         # Check for both AWS and Azure/GCP output formats
         ip = None
-        # Try service_instance_ip (AWS)
-        if f"{service}_instance_ip" in infrastructure:
-            val = infrastructure[f"{service}_instance_ip"]
-            ip = val.get('value') if isinstance(val, dict) else val
-        # Try service_public_ip (Azure)
-        elif f"{service}_public_ip" in infrastructure:
-            val = infrastructure[f"{service}_public_ip"]
-            ip = val.get('value') if isinstance(val, dict) else val
+        # Prefer private IPs for services (redirector is the only public entry point).
+        for candidate_key in (
+            f"{service}_private_ip",
+            f"{service}_instance_ip",
+            f"{service}_public_ip",
+        ):
+            if candidate_key in infrastructure:
+                val = infrastructure[candidate_key]
+                ip = val.get("value") if isinstance(val, dict) else val
+                if ip:
+                    break
             
         if ip:
             if service not in inventory:
@@ -67,10 +86,21 @@ def get_inventory(engagement_file):
             access_info = engagement_data.get('access_info', {}).get('services', {}).get(service, {})
             domain = access_info.get('domain', f"{service}.local") # Default if not set
             
-            inventory["_meta"]["hostvars"][ip] = {
+            hostvars = {
                 "service_name": service,
                 "domain": domain
             }
+
+            # Use the redirector as a bastion for private services.
+            if service != "redirector" and redirector_public_ip:
+                ssh_key = inventory["all"]["vars"]["ansible_ssh_private_key_file"]
+                hostvars["ansible_ssh_common_args"] = (
+                    "-o StrictHostKeyChecking=no "
+                    f"-o ProxyJump=ubuntu@{redirector_public_ip} "
+                    f"-o IdentityFile={ssh_key}"
+                )
+
+            inventory["_meta"]["hostvars"][ip] = hostvars
 
     return inventory
 

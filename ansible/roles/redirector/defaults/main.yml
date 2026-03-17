@@ -1,0 +1,15 @@
+---
+# Mythic callback paths that should be forwarded to Mythic from the C2 hostname.
+# Keep this list tight; everything else is sent to the decoy.
+mythic_callback_paths:
+  - /api/.*
+  - /graphql.*
+  - /ws.*
+  - /socket.io/.*
+
+# IPs/CIDRs allowed to reach management/service backends via the redirector.
+# Non-operators are served the decoy site.
+operator_allowlist: []
+
+# Decoy image (exposed only on redirector localhost:8080)
+decoy_image: "wordpress:latest"
