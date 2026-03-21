@@ -169,19 +169,33 @@ deploy_to_cloud() {
     terraform init
 
     # Provider-independent tfvars with sane defaults.
-    # Azure NSG `source_address_prefix` expects CIDR notation.
-    admin_ip="$(curl -s ifconfig.me 2>/dev/null || echo "127.0.0.1")"
-    if [[ "$admin_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        admin_ip="${admin_ip}/32"
+    # Use allowlist from environment if provided (by manager), else fallback to current IP.
+    if [[ -n "${OPERATOR_ALLOWLIST:-}" ]]; then
+        admin_ip="$OPERATOR_ALLOWLIST"
+    else
+        admin_ip="$(curl -s ifconfig.me 2>/dev/null || echo "127.0.0.1")"
+        if [[ "$admin_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            admin_ip="${admin_ip}/32"
+        fi
     fi
     ssh_public_key_path="${SSH_PUBLIC_KEY_PATH:-$HOME/.ssh/id_rsa.pub}"
+
+    # GCP: ensure subnet regions follow the operator-selected CLOUD_REGION (from engagement-manager.sh).
+    # Without this, the Terraform generator defaults `subnet_regions` to `us-east1`, which can break
+    # deployments when `gcp_region` is a different region.
+    local subnet_regions_tfvar=""
+    if [[ "$provider" == "gcp" ]]; then
+        subnet_regions_tfvar="subnet_regions = [\"${CLOUD_REGION:-us-east4}\", \"${CLOUD_REGION:-us-east4}\"]"
+    fi
 
     cat > terraform.tfvars << EOF
 environment = "$ENVIRONMENT"
 deployment_mode = "$mode"
 admin_ip = "$admin_ip"
 ssh_public_key_path = "$ssh_public_key_path"
-azure_region = "${CLOUD_REGION:-centralus}"
+gcp_region = "${CLOUD_REGION:-us-east4}"
+gcp_project_id = "${GCP_PROJECT_ID:-aegis-auto-c2}"
+$subnet_regions_tfvar
 stealth_mode = "$STEALTH_MODE"
 enable_monitoring = $([ "$STEALTH_MODE" = "low" ] && echo "true" || echo "false")
 enable_centralized_logging = $([ "$STEALTH_MODE" = "low" ] && echo "true" || echo "false")

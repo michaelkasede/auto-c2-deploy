@@ -1,7 +1,12 @@
-variable "azure_region" {
-  description = "Azure region for deployment"
+variable "gcp_project_id" {
+  description = "GCP project ID"
   type        = string
-  default     = "eastus"
+}
+
+variable "gcp_region" {
+  description = "GCP region for deployment"
+  type        = string
+  default     = "us-east1"
 }
 
 variable "environment" {
@@ -9,20 +14,14 @@ variable "environment" {
   type        = string
 }
 
-variable "vnet_address_space" {
-  description = "Address space for VNet"
-  type        = string
-  default     = "10.0.0.0/16"
-}
-
-variable "subnet_names" {
-  description = "Names of subnets"
+variable "subnet_regions" {
+  description = "Regions for subnets"
   type        = list(string)
-  default     = ["public1", "public2"]
+  default     = ["us-east1", "us-east1"]
 }
 
-variable "subnet_address_prefixes" {
-  description = "Address prefixes for subnets"
+variable "subnet_cidrs" {
+  description = "CIDR blocks for subnets"
   type        = list(string)
   default     = ["10.0.1.0/24", "10.0.2.0/24"]
 }
@@ -38,15 +37,15 @@ variable "ssh_public_key_path" {
   default     = "~/.ssh/id_rsa.pub"
 }
 
-variable "vm_sizes" {
-  description = "VM sizes for different services"
+variable "machine_types" {
+  description = "Machine types for different services"
   type        = map(string)
   default = {
-    mythic    = "Standard_D1_v2"
-    gophish   = "Standard_B2ts_v2"
-    evilginx  = "Standard_B2ts_v2"
-    pwndrop   = "Standard_B2ts_v2"
-    redirector = "Standard_B2ts_v2"
+    mythic    = "e2-standard-2"
+    gophish   = "e2-standard-2"
+    evilginx  = "e2-standard-2"
+    pwndrop   = "e2-small"
+    redirector = "e2-small"
   }
 }
 

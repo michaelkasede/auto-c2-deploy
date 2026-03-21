@@ -9,18 +9,46 @@
     name:
       - certbot
       - python3-certbot-nginx
+      - python3-pip
     state: present
+
+- name: Install Certbot DuckDNS DNS plugin
+  pip:
+    name: certbot-dns-duckdns
+    state: present
+    executable: pip3
+
+- name: Resolve DUCKDNS_TOKEN and CERTBOT_EMAIL from environment
+  set_fact:
+    duckdns_token: "{{ lookup('env', 'DUCKDNS_TOKEN') | trim }}"
+    certbot_email: "{{ lookup('env', 'CERTBOT_EMAIL') | trim }}"
+
+- name: Require DUCKDNS_TOKEN for DNS-01 certificate issuance
+  assert:
+    that:
+      - duckdns_token | length > 0
+    fail_msg: >-
+      DUCKDNS_TOKEN is not set.  Export it before running the playbook:
+        export DUCKDNS_TOKEN="your-token"
+
+- name: Require CERTBOT_EMAIL for certificate issuance
+  assert:
+    that:
+      - certbot_email | length > 0
+    fail_msg: >-
+      CERTBOT_EMAIL is not set.  Export it before running the playbook:
+        export CERTBOT_EMAIL="you@example.com"
 
 - name: Request SSL Certificates
   command: >
-    certbot certonly --nginx
+    certbot certonly
+    --authenticator dns-duckdns
+    --preferred-challenges dns
+    --dns-duckdns-token {{ duckdns_token }}
+    --dns-duckdns-propagation-seconds 120
     -d {{ base_domain }}
-    -d {{ c2_domain }}
-    -d {{ mail_domain }}
-    -d {{ login_domain }}
-    -d {{ cdn_domain }}
-    -d ops.{{ base_domain }}
-    --non-interactive --agree-tos --email admin@{{ base_domain }}
+    -d *.{{ base_domain }}
+    --non-interactive --agree-tos --email {{ certbot_email }}
   args:
     creates: "/etc/letsencrypt/live/{{ base_domain }}/fullchain.pem"
 
@@ -36,15 +64,17 @@
     dest: /opt/decoy/docker-compose.yml
 
 - name: Start Decoy container
-  community.docker.docker_compose:
-    project_src: /opt/decoy
-    state: present
+  shell: |
+    docker compose -f /opt/decoy/docker-compose.yml up -d
+  args:
+    chdir: /opt/decoy
 
 - name: Deploy Smart Redirector configuration
   template:
     src: smart-redirector.conf.j2
     dest: /etc/nginx/sites-available/aegis-redirector.conf
   notify: Reload Nginx
+  tags: [redirector_config, update_decoy]
 
 - name: Enable Smart Redirector
   file:

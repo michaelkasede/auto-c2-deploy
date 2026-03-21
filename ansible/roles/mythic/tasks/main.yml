@@ -1,19 +1,155 @@
 ---
-- name: Create Mythic directory structure
+# Ensure Docker is installed (mythic-cli and Mythic services require it).
+# If the common role was skipped (e.g. --limit mythic), this role still works.
+- name: Install packages required for Mythic (Docker, git, curl)
+  apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - git
+      - lsb-release
+    state: present
+  when: ansible_os_family == "Debian"
+
+- name: Install Docker (get.docker.com)
+  shell: |
+    curl -fsSL https://get.docker.com -o get-docker.sh
+    sh get-docker.sh
+    usermod -aG docker ubuntu
+  args:
+    creates: /usr/bin/docker
+
+- name: Install Docker Compose (standalone binary)
+  get_url:
+    url: https://github.com/docker/compose/releases/latest/download/docker-compose-Linux-x86_64
+    dest: /usr/local/bin/docker-compose
+    mode: '0755'
+
+- name: Ensure Docker service is running
+  systemd:
+    name: docker
+    state: started
+    enabled: yes
+
+- name: Ensure /opt exists for Mythic install
   file:
-    path: "/opt/mythic/{{ item }}"
+    path: /opt
     state: directory
     mode: '0755'
-  loop:
-    - ssl
-    - data
 
-- name: Deploy Mythic docker-compose
-  template:
-    src: docker-compose.yml.j2
-    dest: /opt/mythic/docker-compose.yml
+- name: Check if Mythic repo already exists
+  stat:
+    path: /opt/mythic/.git
+  register: mythic_git_check
 
-- name: Start Mythic
-  community.docker.docker_compose:
-    project_src: /opt/mythic
-    state: present
+- name: Remove existing /opt/mythic when it is not a Mythic git checkout
+  file:
+    path: /opt/mythic
+    state: absent
+  when: not mythic_git_check.stat.exists
+
+- name: Clone Mythic repository
+  git:
+    repo: https://github.com/its-a-feature/Mythic.git
+    dest: /opt/mythic
+    version: master
+    force: no
+    depth: 1
+  when: not mythic_git_check.stat.exists
+
+- name: Update Mythic repository (pull latest)
+  git:
+    repo: https://github.com/its-a-feature/Mythic.git
+    dest: /opt/mythic
+    version: master
+    update: yes
+    force: no
+  when: mythic_git_check.stat.exists
+
+- name: Build mythic-cli binary (uses Docker to extract from official image)
+  command: make
+  args:
+    chdir: /opt/mythic
+    creates: /opt/mythic/mythic-cli
+
+- name: Start Mythic services (mythic-cli start)
+  command: ./mythic-cli start
+  args:
+    chdir: /opt/mythic
+  register: mythic_start
+  async: 120
+  poll: 10
+  failed_when: false
+  changed_when: mythic_start.rc == 0
+
+- name: Ensure Mythic is running (retry start if first run failed)
+  command: ./mythic-cli start
+  args:
+    chdir: /opt/mythic
+  when: mythic_start.rc != 0
+  async: 180
+  poll: 15
+  failed_when: false  # mythic-cli may return non-zero when already running
+
+# Install C2 profiles and agents (download Docker images; 30s between each).
+- name: Wait for Mythic to be ready before installing profiles/agents
+  pause:
+    seconds: 30
+
+- name: Install C2 profile – HTTP
+  command: ./mythic-cli install github https://github.com/MythicC2Profiles/http
+  args:
+    chdir: /opt/mythic
+  register: _install_http
+  failed_when: false
+  changed_when: _install_http.rc == 0
+
+- name: Pause 30s after HTTP profile
+  pause:
+    seconds: 30
+
+- name: Install C2 profile – DNS
+  command: ./mythic-cli install github https://github.com/MythicC2Profiles/dns
+  args:
+    chdir: /opt/mythic
+  register: _install_dns
+  failed_when: false
+  changed_when: _install_dns.rc == 0
+
+- name: Pause 30s after DNS profile
+  pause:
+    seconds: 30
+
+- name: Install C2 profile – HTTPX
+  command: ./mythic-cli install github https://github.com/MythicC2Profiles/httpx
+  args:
+    chdir: /opt/mythic
+  register: _install_httpx
+  failed_when: false
+  changed_when: _install_httpx.rc == 0
+
+- name: Pause 30s after HTTPX profile
+  pause:
+    seconds: 30
+
+- name: Install agent – Apollo
+  command: ./mythic-cli install github https://github.com/MythicAgents/Apollo
+  args:
+    chdir: /opt/mythic
+  register: _install_apollo
+  failed_when: false
+  changed_when: _install_apollo.rc == 0
+
+- name: Pause 30s after Apollo agent
+  pause:
+    seconds: 30
+
+- name: Install agent – Poseidon
+  command: ./mythic-cli install github https://github.com/MythicAgents/poseidon
+  args:
+    chdir: /opt/mythic
+  register: _install_poseidon
+  failed_when: false
+  changed_when: _install_poseidon.rc == 0

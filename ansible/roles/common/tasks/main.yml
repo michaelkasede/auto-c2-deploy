@@ -6,10 +6,21 @@
   retries: 20
   delay: 10
 
+- name: Wait for apt locks to be released
+  raw: >
+    while fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do
+      sleep 5;
+    done
+  changed_when: false
+
 - name: Update apt cache
   apt:
     update_cache: yes
     cache_valid_time: 3600
+  retries: 3
+  delay: 15
+  register: apt_update
+  until: apt_update is success
 
 - name: Install common packages
   apt:
@@ -21,6 +32,7 @@
       - lsb-release
       - jq
       - python3-pip
+      - python3-docker
     state: present
 
 - name: Install Docker

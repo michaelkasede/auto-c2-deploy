@@ -1,4 +1,18 @@
 ---
+# Contact email for Let's Encrypt (same as redirector/DuckDNS path: export CERTBOT_EMAIL).
+- name: Resolve Certbot email from CERTBOT_EMAIL
+  set_fact:
+    certbot_email: "{{ lookup('env', 'CERTBOT_EMAIL') | trim }}"
+
+- name: Require CERTBOT_EMAIL for HTTP-01 certificate issuance
+  assert:
+    that:
+      - certbot_email | length > 0
+    fail_msg: >-
+      Set CERTBOT_EMAIL in the environment before Ansible (e.g. export CERTBOT_EMAIL=you@example.com).
+      The ssl role uses it for certbot --email on all HTTP-challenge requests.
+  when: stealth_level != "high"
+
 - name: Install Certbot and Nginx
   apt:
     name:
@@ -15,7 +29,7 @@
 - name: Request SSL certificate (HTTP challenge)
   command: >
     certbot certonly --nginx -d {{ domain }}
-    --non-interactive --agree-tos --email admin@{{ domain }}
+    --non-interactive --agree-tos --email {{ certbot_email }}
     --cert-name {{ service_name }}
   args:
     creates: "/etc/letsencrypt/live/{{ domain }}/fullchain.pem"

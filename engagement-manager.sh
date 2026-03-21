@@ -49,8 +49,13 @@ start_engagement() {
         read -p "Azure Region (e.g., centralus, westeurope) [centralus]: " cloud_region
         cloud_region=${cloud_region:-centralus}
     elif [[ "$cloud_provider" == "aws" ]]; then
-        read -p "AWS Region [us-east-1]: " cloud_region
-        cloud_region=${cloud_region:-us-east-1}
+        read -p "AWS Region: " cloud_region
+        if [[ -z "${cloud_region:-}" ]]; then
+            error "AWS Region is required"
+        fi
+    elif [[ "$cloud_provider" == "gcp" ]]; then
+        read -p "GCP Region (e.g., us-east1, us-east4) [us-east4]: " cloud_region
+        cloud_region=${cloud_region:-us-east4}
     else
         read -p "Cloud Region: " cloud_region
     fi
@@ -64,6 +69,8 @@ start_engagement() {
     echo ""
     header "DOMAIN CONFIGURATION"
     read -p "Base Domain (e.g., zoom-meeting.duckdns.org): " base_domain
+    read -p "Decoy Site URL (e.g., https://wordpress.org): " decoy_site_url
+    decoy_site_url=${decoy_site_url:-https://wordpress.org}
 
     echo ""
     header "OPERATOR ACCESS (ALLOWLIST)"
@@ -84,8 +91,9 @@ start_engagement() {
     echo "- Stealth: $stealth_level"
     echo "- Mode: $deployment_mode"
     echo "- Base Domain: $base_domain"
+    echo "- Decoy Site: $decoy_site_url"
     echo "- Operator allowlist: ${operator_allowlist_raw:-NONE}"
-    echo "  -> Decoy: $base_domain"
+    echo "  -> Decoy Frontend: $base_domain"
     echo "  -> C2 Endpoint: api.$base_domain"
     echo "  -> Mail: mail.$base_domain"
     echo "  -> Login: login.$base_domain"
@@ -126,6 +134,7 @@ PYEOF
   "infrastructure": {},
   "access_info": {
     "base_domain": "$base_domain",
+    "decoy_site_url": "$decoy_site_url",
     "services": {
       "mythic": { "domain": "api.$base_domain" },
       "gophish": { "domain": "mail.$base_domain" },
@@ -154,6 +163,7 @@ EOF
     export DEPLOYMENT_MODE="$deployment_mode"
     export STEALTH_MODE="$stealth_level"
     export ENVIRONMENT="$engagement_name"
+    export OPERATOR_ALLOWLIST="$operator_allowlist_raw"
     
     # Deploy infrastructure
     if [[ -f "deploy-stealth.sh" ]]; then
@@ -246,7 +256,7 @@ except:
     fi
 
     echo ""
-    read -p "Enter Redirector Public IP (Azure Public IP) [${redirector_ip}]: " redirector_ip_input
+    read -p "Enter Redirector Public IP [${redirector_ip}]: " redirector_ip_input
     redirector_ip_input=${redirector_ip_input:-$redirector_ip}
 
     if [[ -z "${redirector_ip_input:-}" ]]; then
@@ -305,6 +315,39 @@ ansible_deployment() {
     cd ..
     
     log "Ansible configuration completed"
+}
+
+# Update the decoy site URL mid-engagement
+update_decoy() {
+    header "UPDATE DECOY SITE"
+    
+    if [[ ! -f "$CURRENT_ENGAGEMENT_FILE" ]]; then
+        error "No active engagement found to update"
+    fi
+    
+    read -p "New Decoy Site URL (e.g., https://outlook.com): " new_url
+    if [[ -z "$new_url" ]]; then
+        error "URL cannot be empty"
+    fi
+    
+    # Update the JSON state
+    python3 << PYEOF
+import json
+with open('$CURRENT_ENGAGEMENT_FILE', 'r') as f:
+    data = json.load(f)
+data['access_info']['decoy_site_url'] = '$new_url'
+with open('$CURRENT_ENGAGEMENT_FILE', 'w') as f:
+    json.dump(data, f, indent=2)
+PYEOF
+
+    log "Updated decoy URL in state to: $new_url"
+    log "Applying changes to Redirector via Ansible..."
+    
+    cd ansible
+    ansible-playbook -i inventory/terraform_inventory.py site.yml --limit redirector --tags update_decoy
+    cd ..
+    
+    engagement "Decoy site updated successfully!"
 }
 
 # Stop current engagement
@@ -569,6 +612,7 @@ show_usage() {
     echo "  status             Check engagement status"
     echo "  list               List past engagements"
     echo "  backup             Backup current engagement data"
+    echo "  update-decoy       Change the decoy site URL mid-engagement"
     echo "  help               Show this help"
 }
 
@@ -581,6 +625,7 @@ main() {
         stop) stop_engagement ;;
         status|--status) check_status ;;
         list) list_engagements ;;
+        update-decoy) update_decoy ;;
         backup|--backup)
             if [[ -f "$CURRENT_ENGAGEMENT_FILE" ]]; then
                 engagement_name=$(python3 -c "import json; print(json.load(open('$CURRENT_ENGAGEMENT_FILE')).get('engagement_name', 'unknown'))")

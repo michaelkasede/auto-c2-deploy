@@ -40,8 +40,9 @@ def get_inventory(engagement_file):
 
     services = ["mythic", "gophish", "evilginx", "pwndrop", "redirector"]
     
-    # Get base domain
+    # Get domains and decoy configuration
     base_domain = engagement_data.get('access_info', {}).get('base_domain', 'example.com')
+    decoy_site_url = engagement_data.get('access_info', {}).get('decoy_site_url', 'https://wordpress.org')
     
     inventory["all"]["vars"].update({
         "base_domain": base_domain,
@@ -49,7 +50,10 @@ def get_inventory(engagement_file):
         "c2_domain": f"api.{base_domain}",
         "mail_domain": f"mail.{base_domain}",
         "login_domain": f"login.{base_domain}",
-        "cdn_domain": f"cdn.{base_domain}"
+        "cdn_domain": f"cdn.{base_domain}",
+        "mythic_callback_paths": ["/index.php", "/api/v1/get", "/news/v1/", "/login/process"],
+        "decoy_image": "wordpress:latest",
+        "decoy_site_url": decoy_site_url
     })
 
     # Determine redirector public IP (used as bastion/ProxyJump).
@@ -92,12 +96,17 @@ def get_inventory(engagement_file):
             }
 
             # Use the redirector as a bastion for private services.
+            # ProxyCommand (not ProxyJump) so the identity file is used for
+            # both the jump host and the final destination.
             if service != "redirector" and redirector_public_ip:
                 ssh_key = inventory["all"]["vars"]["ansible_ssh_private_key_file"]
+                proxy_cmd = (
+                    f"ssh -o StrictHostKeyChecking=no -i {ssh_key} "
+                    f"-W %h:%p ubuntu@{redirector_public_ip}"
+                )
                 hostvars["ansible_ssh_common_args"] = (
-                    "-o StrictHostKeyChecking=no "
-                    f"-o ProxyJump=ubuntu@{redirector_public_ip} "
-                    f"-o IdentityFile={ssh_key}"
+                    f"-o StrictHostKeyChecking=no "
+                    f"-o ProxyCommand=\"{proxy_cmd}\""
                 )
 
             inventory["_meta"]["hostvars"][ip] = hostvars

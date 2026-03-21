@@ -37,6 +37,11 @@
     restart_policy: unless-stopped
   when: stealth_level == "low"
 
+- name: Check if Nginx conf.d directory exists
+  stat:
+    path: /etc/nginx/conf.d
+  register: nginx_confd
+
 - name: Disable metrics endpoints in Nginx (High/Medium Stealth)
   copy:
     content: |
@@ -49,4 +54,4 @@
           return 404;
       }
     dest: /etc/nginx/conf.d/disable-metrics.conf
-  when: stealth_level != "low"
+  when: stealth_level != "low" and nginx_confd.stat.exists

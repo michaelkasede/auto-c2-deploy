@@ -65,6 +65,7 @@ server {
     # Mythic C2 Callback Paths
     location ~ ^({{ mythic_callback_paths | join('|') }}) {
         proxy_pass https://mythic_backend;
+        proxy_ssl_verify off;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         add_header X-Aegis-Filter "C2-Access";
@@ -144,6 +145,7 @@ server {
     location /mythic/ {
         rewrite ^/mythic/?(.*)$ /$1 break;
         proxy_pass https://mythic_backend;
+        proxy_ssl_verify off;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         add_header X-Aegis-Filter "Ops-Mythic";

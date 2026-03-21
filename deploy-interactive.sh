@@ -189,7 +189,14 @@ deploy_to_cloud() {
     cat > terraform.tfvars << EOF
 environment = "$ENVIRONMENT"
 deployment_mode = "$mode"
-admin_ip = "$(curl -s ifconfig.me 2>/dev/null || echo "127.0.0.1")"
+admin_ip = "$(
+  ip="$(curl -s ifconfig.me 2>/dev/null || echo "127.0.0.1")"
+  if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "${ip}/32"
+  else
+    echo "$ip"
+  fi
+)"
 EOF
     
     # Plan and apply

@@ -54,6 +54,65 @@ cd multi-cloud-redteam
 ./engagement-manager.sh start
 ```
 
+## Environment Variables (DuckDNS + Certbot)
+If you are using DuckDNS for your DNS-01 certificate validation, export the following variables in the same shell where you run `./engagement-manager.sh start` (Ansible inherits the environment from the parent process):
+
+```bash
+export DUCKDNS_TOKEN="YOUR_DUCKDNS_TOKEN"
+export CERTBOT_EMAIL="your_email@example.com"
+```
+
+The redirector SSL automation reads these variables when invoking Certbot.
+
+### How Certbot is used in this project
+- **`certbot_email`** – At the start of the SSL/redirector roles, the contact email is set once from `CERTBOT_EMAIL` (trimmed) so every Certbot invocation uses the same value.
+- **Assert** – On the HTTP-01 path (when `stealth_level != "high"`), Ansible fails immediately with a clear error if `CERTBOT_EMAIL` is missing or blank, so you fix it before any certificate requests run.
+- **Certbot tasks** – Playbook tasks use the `{{ certbot_email }}` variable instead of an inline `lookup('env', …)` for consistency and readability.
+- **DuckDNS DNS-01 wildcard cert** – The redirector requests one certificate for `{{ base_domain }}` and `*.{{ base_domain }}` (for example: `zoom-meeting.duckdns.org` and `*.zoom-meeting.duckdns.org`) to avoid DuckDNS multi-SAN TXT challenge issues.
+- **Renewal** – Auto-renewal runs `certbot renew`, which does not take `--email`; the Let's Encrypt account (and renewals) stay tied to the account created when certificates were first requested with `CERTBOT_EMAIL`.
+
+### Certificate distribution to private VMs
+- **Automated by Ansible** – After the redirector obtains the wildcard certificate, `ansible/site.yml` copies:
+  - `/etc/letsencrypt/live/<base_domain>/fullchain.pem`
+  - `/etc/letsencrypt/live/<base_domain>/privkey.pem`
+  to each private service VM (`mythic`, `gophish`, `evilginx`, `pwndrop`) at:
+  - `/etc/aegis/certs/fullchain.pem`
+  - `/etc/aegis/certs/privkey.pem`
+
+### Manual fallback (if you need to copy certs yourself)
+If you ever need to do this manually, first SSH to the redirector, copy certs locally, then transfer to private hosts:
+
+```bash
+# 1) SSH to redirector
+ssh -i ~/.ssh/id_rsa ubuntu@<REDIRECTOR_PUBLIC_IP>
+
+# 2) On redirector: package certs
+sudo tar -czf /tmp/aegis-certs.tar.gz -C /etc/letsencrypt/live/<base_domain> fullchain.pem privkey.pem
+
+# 3) From your local machine: download bundle
+scp -i ~/.ssh/id_rsa ubuntu@<REDIRECTOR_PUBLIC_IP>:/tmp/aegis-certs.tar.gz .
+
+# 4) Upload to a private VM via ProxyJump
+scp -i ~/.ssh/id_rsa -o ProxyJump=ubuntu@<REDIRECTOR_PUBLIC_IP> aegis-certs.tar.gz ubuntu@<PRIVATE_VM_IP>:/tmp/
+
+# 5) On each private VM: install certs
+ssh -i ~/.ssh/id_rsa -J ubuntu@<REDIRECTOR_PUBLIC_IP> ubuntu@<PRIVATE_VM_IP> \
+  'sudo mkdir -p /etc/aegis/certs && sudo tar -xzf /tmp/aegis-certs.tar.gz -C /etc/aegis/certs && sudo chmod 600 /etc/aegis/certs/privkey.pem && sudo chmod 644 /etc/aegis/certs/fullchain.pem'
+```
+
+### GCP project ID
+When you choose **GCP** as the cloud provider, export your Google Cloud project ID in the same shell before running `./engagement-manager.sh start` (the deployment script reads it when generating Terraform config):
+
+```bash
+export GCP_PROJECT_ID="your-gcp-project-id"
+```
+
+Optionally set the region (default is `us-east4`):
+
+```bash
+export CLOUD_REGION="us-east4"
+```
+
 ### Check Engagement Status
 ```bash
 cd multi-cloud-redteam

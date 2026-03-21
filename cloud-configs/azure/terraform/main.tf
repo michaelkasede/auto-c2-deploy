@@ -152,14 +152,17 @@ resource "azurerm_linux_virtual_machine" "service" {
 
   os_disk {
     caching              = "ReadWrite"
-    storage_account_type = "Premium_LRS"
+    storage_account_type = "Standard_LRS"
   }
 
   source_image_reference {
     publisher = "Canonical"
-    offer     = "UbuntuServer"
-    sku       = "20.04-LTS"
-    version   = "latest"
+    # NOTE: In some subscriptions/regions (e.g., Azure for Students in centralus),
+    # Canonical's 20.04-LTS isn't available under the "UbuntuServer" offer.
+    # Jammy (22.04) is available under the Jammy offer.
+    offer   = "0001-com-ubuntu-server-jammy"
+    sku     = "22_04-lts-gen2"
+    version = "latest"
   }
 
   custom_data = base64encode(templatefile("${path.module}/templates/cloud-init-base.sh", {

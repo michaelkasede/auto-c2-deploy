@@ -107,7 +107,7 @@ resource "aws_security_group" "redteam_base" {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["${var.admin_ip}/32"]
+    cidr_blocks = ["${var.admin_ip}"]
   }
   
   ingress {
@@ -152,6 +152,12 @@ resource "aws_instance" "service" {
   key_name                    = var.ssh_key_name
   associate_public_ip_address = each.key == "redirector" ? true : false
   
+  # Standard storage (gp2)
+  root_block_device {
+    volume_type = "gp2"
+    volume_size = 20
+  }
+
   user_data = templatefile("${path.module}/templates/cloud-init-base.sh", {
     hostname = "${each.key}-${var.environment}"
   })
@@ -345,7 +351,7 @@ resource "azurerm_linux_virtual_machine" "service" {
   
   os_disk {
     caching              = "ReadWrite"
-    storage_account_type = "Premium_LRS"
+    storage_account_type = "Standard_LRS" # Standard HDD/SSD instead of Premium
   }
   
   source_image_reference {
@@ -428,8 +434,51 @@ resource "google_compute_firewall" "redteam" {
     ports    = ["22", "80", "443", "7443", "3333", "8080"]
   }
   
-  source_ranges = ["${var.admin_ip}/32", "0.0.0.0/0"]
+  source_ranges = ["${var.admin_ip}", "0.0.0.0/0"]
   target_tags   = ["redteam"]
+}
+
+# Allow all internal traffic between VMs in the VPC
+resource "google_compute_firewall" "internal" {
+  name    = "${var.environment}-internal-fw"
+  network = google_compute_network.redteam.name
+
+  allow {
+    protocol = "tcp"
+    ports    = ["0-65535"]
+  }
+
+  allow {
+    protocol = "udp"
+    ports    = ["0-65535"]
+  }
+
+  allow {
+    protocol = "icmp"
+  }
+
+  source_tags = ["redteam"]
+  target_tags = ["redteam"]
+}
+
+# Cloud Router + NAT so private VMs (no public IP) can reach the internet
+resource "google_compute_router" "nat_router" {
+  name    = "${var.environment}-nat-router"
+  region  = var.gcp_region
+  network = google_compute_network.redteam.id
+}
+
+resource "google_compute_router_nat" "nat" {
+  name                               = "${var.environment}-cloud-nat"
+  router                             = google_compute_router.nat_router.name
+  region                             = var.gcp_region
+  nat_ip_allocate_option             = "AUTO_ONLY"
+  source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
+
+  log_config {
+    enable = false
+    filter = "ALL"
+  }
 }
 
 # Only Redirector gets static reserved IP
@@ -444,11 +493,13 @@ resource "google_compute_instance" "service" {
   zone         = "${var.gcp_region}-a"
   
   tags = ["redteam"]
+  allow_stopping_for_update = true
   
   boot_disk {
     initialize_params {
-      image = "ubuntu-os-cloud/ubuntu-2004-lts"
+      image = "ubuntu-os-cloud/ubuntu-2204-lts"
       size  = 50
+      type  = "pd-standard" # Standard HDD instead of pd-balanced/pd-ssd
     }
   }
   
@@ -562,11 +613,11 @@ variable "instance_types" {
   description = "Instance types for different services"
   type        = map(string)
   default = {
-    mythic    = "t3.large"
-    gophish   = "t3.medium"
-    evilginx  = "t3.medium"
-    pwndrop   = "t3.small"
-    redirector = "t3.small"
+    mythic    = "e2.medium"
+    gophish   = "e2.small"
+    evilginx  = "e2.small"
+    pwndrop   = "e2.micro"
+    redirector = "e2.micro"
   }
 }
 ''' + common_vars
@@ -574,7 +625,7 @@ variable "instance_types" {
             return '''variable "azure_region" {
   description = "Azure region for deployment"
   type        = string
-  default     = "centralus"
+  default     = "westus2"
 }
 
 variable "environment" {
@@ -615,11 +666,11 @@ variable "vm_sizes" {
   description = "VM sizes for different services"
   type        = map(string)
   default = {
-    mythic    = "Standard_D4s_v3"
-    gophish   = "Standard_D2s_v3"
-    evilginx  = "Standard_D2s_v3"
-    pwndrop   = "Standard_D1s_v2"
-    redirector = "Standard_D1s_v2"
+    mythic    = "Standard_B2ms"
+    gophish   = "Standard_B1ms"
+    evilginx  = "Standard_B1ms"
+    pwndrop   = "Standard_B1ms"
+    redirector = "Standard_B1ms"
   }
 }
 ''' + common_vars
@@ -667,11 +718,11 @@ variable "machine_types" {
   description = "Machine types for different services"
   type        = map(string)
   default = {
-    mythic    = "e2-standard-4"
+    mythic    = "e2-standard-2"
     gophish   = "e2-standard-2"
     evilginx  = "e2-standard-2"
-    pwndrop   = "e2-standard-1"
-    redirector = "e2-standard-1"
+    pwndrop   = "e2-small"
+    redirector = "e2-small"
   }
 }
 ''' + common_vars
