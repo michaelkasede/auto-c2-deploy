@@ -27,7 +27,10 @@ multi-cloud-redteam/
 │   ├── cloud-init-gophish.sh
 │   ├── cloud-init-evilginx.sh
 │   └── cloud-init-pwndrop.sh
+├── DEPLOYMENT_TEST.md             # Pre-test checklist (Terraform + Ansible + per-VM)
 ├── scripts/                       # Utility scripts
+│   ├── validate-iac.sh            # Terraform + Ansible syntax validation
+│   ├── pre-deployment-check.sh    # engagement JSON + infra sanity checks
 │   ├── configure-multi-operator.sh
 │   ├── configure-stealth.sh
 │   └── aws-redteam-deploy.sh
@@ -52,6 +55,28 @@ multi-cloud-redteam/
 ```bash
 cd multi-cloud-redteam
 ./engagement-manager.sh start
+```
+
+### Validate IaC (Terraform + Ansible)
+
+From the repo root:
+
+```bash
+./scripts/validate-iac.sh
+```
+
+Before a full deployment test, run:
+
+```bash
+./scripts/pre-deployment-check.sh
+```
+
+See **`DEPLOYMENT_TEST.md`** for the full checklist (Terraform → `current.json` → Ansible) and per-service notes (redirector TLS, Mythic, GoPhish, Evilginx, Pwndrop).
+
+Install Ansible collections required by the playbooks (e.g. `community.docker` for the stealth role when `stealth_level` is `low`):
+
+```bash
+ansible-galaxy collection install -r ansible/collections/requirements.yml
 ```
 
 ## Environment Variables (DuckDNS + Certbot)

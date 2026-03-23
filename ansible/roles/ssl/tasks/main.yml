@@ -1,11 +1,11 @@
 ---
 # Contact email for Let's Encrypt (same as redirector/DuckDNS path: export CERTBOT_EMAIL).
 - name: Resolve Certbot email from CERTBOT_EMAIL
-  set_fact:
+  ansible.builtin.set_fact:
     certbot_email: "{{ lookup('env', 'CERTBOT_EMAIL') | trim }}"
 
 - name: Require CERTBOT_EMAIL for HTTP-01 certificate issuance
-  assert:
+  ansible.builtin.assert:
     that:
       - certbot_email | length > 0
     fail_msg: >-
@@ -14,7 +14,7 @@
   when: stealth_level != "high"
 
 - name: Install Certbot and Nginx
-  apt:
+  ansible.builtin.apt:
     name:
       - certbot
       - python3-certbot-nginx
@@ -22,12 +22,12 @@
     state: present
 
 - name: Create SSL directories
-  file:
+  ansible.builtin.file:
     path: "/etc/ssl/{{ service_name }}"
     state: directory
 
 - name: Request SSL certificate (HTTP challenge)
-  command: >
+  ansible.builtin.command: >
     certbot certonly --nginx -d {{ domain }}
     --non-interactive --agree-tos --email {{ certbot_email }}
     --cert-name {{ service_name }}
@@ -36,24 +36,24 @@
   when: stealth_level != "high"
 
 - name: Setup auto-renewal cron job
-  cron:
+  ansible.builtin.cron:
     name: "Renew SSL for {{ service_name }}"
     minute: "0"
     hour: "12"
     job: "certbot renew --quiet --post-hook 'systemctl reload nginx'"
 
 - name: Configure Nginx SSL
-  template:
+  ansible.builtin.template:
     src: nginx-ssl.conf.j2
     dest: "/etc/nginx/sites-available/{{ service_name }}-ssl.conf"
 
 - name: Enable Nginx site
-  file:
+  ansible.builtin.file:
     src: "/etc/nginx/sites-available/{{ service_name }}-ssl.conf"
     dest: "/etc/nginx/sites-enabled/{{ service_name }}-ssl.conf"
     state: link
 
 - name: Reload Nginx
-  systemd:
+  ansible.builtin.systemd:
     name: nginx
     state: reloaded

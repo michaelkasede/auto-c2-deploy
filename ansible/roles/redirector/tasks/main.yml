@@ -1,11 +1,11 @@
 ---
 - name: Install Nginx
-  apt:
+  ansible.builtin.apt:
     name: nginx
     state: present
 
 - name: Install Certbot
-  apt:
+  ansible.builtin.apt:
     name:
       - certbot
       - python3-certbot-nginx
@@ -13,18 +13,18 @@
     state: present
 
 - name: Install Certbot DuckDNS DNS plugin
-  pip:
+  ansible.builtin.pip:
     name: certbot-dns-duckdns
     state: present
     executable: pip3
 
 - name: Resolve DUCKDNS_TOKEN and CERTBOT_EMAIL from environment
-  set_fact:
+  ansible.builtin.set_fact:
     duckdns_token: "{{ lookup('env', 'DUCKDNS_TOKEN') | trim }}"
     certbot_email: "{{ lookup('env', 'CERTBOT_EMAIL') | trim }}"
 
 - name: Require DUCKDNS_TOKEN for DNS-01 certificate issuance
-  assert:
+  ansible.builtin.assert:
     that:
       - duckdns_token | length > 0
     fail_msg: >-
@@ -32,7 +32,7 @@
         export DUCKDNS_TOKEN="your-token"
 
 - name: Require CERTBOT_EMAIL for certificate issuance
-  assert:
+  ansible.builtin.assert:
     that:
       - certbot_email | length > 0
     fail_msg: >-
@@ -40,7 +40,7 @@
         export CERTBOT_EMAIL="you@example.com"
 
 - name: Request SSL Certificates
-  command: >
+  ansible.builtin.command: >
     certbot certonly
     --authenticator dns-duckdns
     --preferred-challenges dns
@@ -53,37 +53,41 @@
     creates: "/etc/letsencrypt/live/{{ base_domain }}/fullchain.pem"
 
 - name: Create decoy directory
-  file:
+  ansible.builtin.file:
     path: /opt/decoy
     state: directory
     mode: '0755'
 
 - name: Deploy Decoy docker-compose
-  template:
+  ansible.builtin.template:
     src: decoy-docker-compose.yml.j2
     dest: /opt/decoy/docker-compose.yml
 
 - name: Start Decoy container
-  shell: |
+  ansible.builtin.shell: |
     docker compose -f /opt/decoy/docker-compose.yml up -d
   args:
     chdir: /opt/decoy
 
 - name: Deploy Smart Redirector configuration
-  template:
+  ansible.builtin.template:
     src: smart-redirector.conf.j2
     dest: /etc/nginx/sites-available/aegis-redirector.conf
   notify: Reload Nginx
   tags: [redirector_config, update_decoy]
 
 - name: Enable Smart Redirector
-  file:
+  ansible.builtin.file:
     src: /etc/nginx/sites-available/aegis-redirector.conf
     dest: /etc/nginx/sites-enabled/aegis-redirector.conf
     state: link
 
 - name: Remove default Nginx site
-  file:
+  ansible.builtin.file:
     path: /etc/nginx/sites-enabled/default
     state: absent
   notify: Reload Nginx
+
+- name: Validate Nginx configuration (certs + smart redirector)
+  ansible.builtin.command: nginx -t
+  changed_when: false

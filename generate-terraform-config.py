@@ -158,6 +158,13 @@ resource "aws_instance" "service" {
     volume_size = 20
   }
 
+  # IMDSv2 (multi-cloud security baseline)
+  metadata_options {
+    http_tokens                 = "required"
+    http_endpoint               = "enabled"
+    http_put_response_hop_limit = 1
+  }
+
   user_data = templatefile("${path.module}/templates/cloud-init-base.sh", {
     hostname = "${each.key}-${var.environment}"
   })
@@ -392,9 +399,9 @@ output "pwndrop_private_ip" {
         
         return config
     
-    def generate_gcp_config(self):
-        """Generate GCP Terraform configuration"""
-        config = '''terraform {
+    def generate_gcp_providers_tf(self):
+        """GCP provider + terraform block (providers.tf)."""
+        return '''terraform {
   required_version = ">= 1.0"
   required_providers {
     google = {
@@ -408,19 +415,32 @@ provider "google" {
   project = var.gcp_project_id
   region  = var.gcp_region
 }
+'''
 
-# VPC Network
+    def generate_gcp_main_tf(self):
+        """GCP resources only (main.tf)."""
+        return '''# VPC Network
 resource "google_compute_network" "redteam" {
   name                    = "${var.environment}-redteam-vpc"
   auto_create_subnetworks = "false"
 }
 
-# Subnets
+locals {
+  public_subnets = {
+    for idx in range(length(var.subnet_regions)) : tostring(idx) => {
+      region = var.subnet_regions[idx]
+      cidr   = var.subnet_cidrs[idx]
+    }
+  }
+}
+
+# Subnets (for_each preferred over count for stable addressing)
 resource "google_compute_subnetwork" "public" {
-  count         = length(var.subnet_regions)
-  name          = "${var.environment}-public-subnet-${count.index + 1}"
-  ip_cidr_range = var.subnet_cidrs[count.index]
-  region        = var.subnet_regions[count.index]
+  for_each = local.public_subnets
+
+  name          = "${var.environment}-public-subnet-${each.key}"
+  ip_cidr_range = each.value.cidr
+  region        = each.value.region
   network       = google_compute_network.redteam.id
 }
 
@@ -428,12 +448,12 @@ resource "google_compute_subnetwork" "public" {
 resource "google_compute_firewall" "redteam" {
   name    = "${var.environment}-redteam-fw"
   network = google_compute_network.redteam.name
-  
+
   allow {
     protocol = "tcp"
     ports    = ["22", "80", "443", "7443", "3333", "8080"]
   }
-  
+
   source_ranges = ["${var.admin_ip}", "0.0.0.0/0"]
   target_tags   = ["redteam"]
 }
@@ -483,18 +503,19 @@ resource "google_compute_router_nat" "nat" {
 
 # Only Redirector gets static reserved IP
 resource "google_compute_address" "redirector_ip" {
-  name     = "${var.environment}-redirector-ip"
+  name = "${var.environment}-redirector-ip"
 }
 
 resource "google_compute_instance" "service" {
-  for_each     = var.machine_types
+  for_each = var.machine_types
+
   name         = "${var.environment}-${each.key}-vm"
   machine_type = each.value
   zone         = "${var.gcp_region}-a"
-  
+
   tags = ["redteam"]
   allow_stopping_for_update = true
-  
+
   boot_disk {
     initialize_params {
       image = "ubuntu-os-cloud/ubuntu-2204-lts"
@@ -502,9 +523,9 @@ resource "google_compute_instance" "service" {
       type  = "pd-standard" # Standard HDD instead of pd-balanced/pd-ssd
     }
   }
-  
+
   network_interface {
-    subnetwork = google_compute_subnetwork.public[0].id
+    subnetwork = google_compute_subnetwork.public["0"].id
     # Access config (Public IP) ONLY for redirector
     dynamic "access_config" {
       for_each = each.key == "redirector" ? [1] : []
@@ -513,40 +534,44 @@ resource "google_compute_instance" "service" {
       }
     }
   }
-  
+
   metadata = {
-    ssh-keys = "ubuntu:${file(var.ssh_public_key_path)}"
+    ssh-keys  = "ubuntu:${file(var.ssh_public_key_path)}"
     user-data = templatefile("${path.module}/templates/cloud-init-base.sh", {
       hostname = "${each.key}-${var.environment}"
     })
   }
-  
+
   labels = {
     environment = var.environment
     service     = each.key
     provider    = "gcp"
   }
 }
+'''
 
-# Outputs
-output "redirector_public_ip" {
+    def generate_gcp_outputs_tf(self):
+        """GCP outputs (outputs.tf)."""
+        return '''output "redirector_public_ip" {
   value = google_compute_address.redirector_ip.address
 }
+
 output "mythic_private_ip" {
   value = google_compute_instance.service["mythic"].network_interface[0].network_ip
 }
+
 output "gophish_private_ip" {
   value = google_compute_instance.service["gophish"].network_interface[0].network_ip
 }
+
 output "evilginx_private_ip" {
   value = google_compute_instance.service["evilginx"].network_interface[0].network_ip
 }
+
 output "pwndrop_private_ip" {
   value = google_compute_instance.service["pwndrop"].network_interface[0].network_ip
 }
 '''
-        
-        return config
     
     def generate_variables_file(self):
         """Generate variables file for the provider"""
@@ -734,16 +759,21 @@ variable "machine_types" {
         # Generate main configuration
         if self.provider == "aws":
             config = self.generate_aws_config()
+            with open(os.path.join(output_dir, "main.tf"), "w") as f:
+                f.write(config)
         elif self.provider == "azure":
             config = self.generate_azure_config()
+            with open(os.path.join(output_dir, "main.tf"), "w") as f:
+                f.write(config)
         elif self.provider == "gcp":
-            config = self.generate_gcp_config()
+            with open(os.path.join(output_dir, "providers.tf"), "w") as f:
+                f.write(self.generate_gcp_providers_tf())
+            with open(os.path.join(output_dir, "main.tf"), "w") as f:
+                f.write(self.generate_gcp_main_tf())
+            with open(os.path.join(output_dir, "outputs.tf"), "w") as f:
+                f.write(self.generate_gcp_outputs_tf())
         else:
             raise ValueError(f"Unsupported provider: {self.provider}")
-        
-        # Save main.tf
-        with open(os.path.join(output_dir, "main.tf"), "w") as f:
-            f.write(config)
         
         # Save variables.tf
         with open(os.path.join(output_dir, "variables.tf"), "w") as f:

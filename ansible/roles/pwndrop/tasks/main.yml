@@ -1,39 +1,39 @@
 ---
 - name: Download Pwndrop
-  get_url:
+  ansible.builtin.get_url:
     url: https://github.com/kgretzky/pwndrop/releases/latest/download/pwndrop-linux-x64.tar.gz
     dest: /tmp/pwndrop.tar.gz
 
 - name: Extract Pwndrop
-  unarchive:
+  ansible.builtin.unarchive:
     src: /tmp/pwndrop.tar.gz
     dest: /usr/local/bin
     remote_src: yes
     creates: /usr/local/bin/pwndrop
 
 - name: Set Pwndrop permissions
-  file:
+  ansible.builtin.file:
     path: /usr/local/bin/pwndrop
     mode: '0755'
 
 - name: Create Pwndrop config directory
-  file:
+  ansible.builtin.file:
     path: /etc/pwndrop
     state: directory
 
 - name: Initialize Pwndrop
-  shell: /usr/local/bin/pwndrop --init
+  ansible.builtin.shell: /usr/local/bin/pwndrop --init
   args:
     chdir: /etc/pwndrop
     creates: /etc/pwndrop/pwndrop.db
 
 - name: Create Pwndrop systemd service
-  template:
+  ansible.builtin.template:
     src: pwndrop.service.j2
     dest: /etc/systemd/system/pwndrop.service
 
 - name: Start and enable Pwndrop
-  systemd:
+  ansible.builtin.systemd:
     name: pwndrop
     state: started
     enabled: yes

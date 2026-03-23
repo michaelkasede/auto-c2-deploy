@@ -1,13 +1,13 @@
 ---
 - name: HIGH Stealth - Setup log rotation
-  template:
+  ansible.builtin.template:
     src: rotate-logs.sh.j2
     dest: "/opt/{{ service_name }}/rotate-logs.sh"
     mode: '0755'
   when: stealth_level == "high"
 
 - name: HIGH Stealth - Add log rotation cron job
-  cron:
+  ansible.builtin.cron:
     name: "Rotate logs for {{ service_name }}"
     minute: "0"
     hour: "2"
@@ -15,21 +15,21 @@
   when: stealth_level == "high"
 
 - name: MEDIUM Stealth - Setup basic health monitor
-  template:
+  ansible.builtin.template:
     src: health-monitor.sh.j2
     dest: "/opt/{{ service_name }}/health-monitor.sh"
     mode: '0755'
   when: stealth_level == "medium"
 
 - name: MEDIUM Stealth - Add health monitor cron job
-  cron:
+  ansible.builtin.cron:
     name: "Health monitor for {{ service_name }}"
     minute: "*/30"
     job: "/opt/{{ service_name }}/health-monitor.sh >> /opt/{{ service_name }}/health.log"
   when: stealth_level == "medium"
 
 - name: LOW Stealth - Install node exporter
-  docker_container:
+  community.docker.docker_container:
     name: node-exporter
     image: prom/node-exporter:latest
     ports:
@@ -38,12 +38,23 @@
   when: stealth_level == "low"
 
 - name: Check if Nginx conf.d directory exists
-  stat:
+  ansible.builtin.stat:
     path: /etc/nginx/conf.d
   register: nginx_confd
 
-- name: Disable metrics endpoints in Nginx (High/Medium Stealth)
-  copy:
+# Nginx includes conf.d/*.conf in http{} — `location` is only valid inside server{}.
+# Use a snippet + include in server blocks (see redirector smart-redirector.conf.j2).
+- name: Ensure Nginx snippets directory exists
+  ansible.builtin.file:
+    path: /etc/nginx/snippets
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: nginx_confd.stat.exists
+
+- name: Install metrics deny snippet for Nginx (High/Medium Stealth)
+  ansible.builtin.copy:
     content: |
       location /metrics {
           deny all;
@@ -53,5 +64,20 @@
           deny all;
           return 404;
       }
-    dest: /etc/nginx/conf.d/disable-metrics.conf
+    dest: /etc/nginx/snippets/aegis-disable-metrics.conf
+    owner: root
+    group: root
+    mode: '0644'
   when: stealth_level != "low" and nginx_confd.stat.exists
+
+- name: Remove metrics deny snippet when LOW stealth (expose node exporter)
+  ansible.builtin.file:
+    path: /etc/nginx/snippets/aegis-disable-metrics.conf
+    state: absent
+  when: stealth_level == "low" and nginx_confd.stat.exists
+
+- name: Remove legacy invalid conf.d metrics file (location not allowed in http context)
+  ansible.builtin.file:
+    path: /etc/nginx/conf.d/disable-metrics.conf
+    state: absent
+  when: nginx_confd.stat.exists

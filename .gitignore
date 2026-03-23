@@ -50,6 +50,7 @@ secrets.yaml
 credentials.json
 
 # === OS & IDE ===
+.cursor/
 .DS_Store
 .idea/
 .vscode/

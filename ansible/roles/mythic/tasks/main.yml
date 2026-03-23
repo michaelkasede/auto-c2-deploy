@@ -2,7 +2,7 @@
 # Ensure Docker is installed (mythic-cli and Mythic services require it).
 # If the common role was skipped (e.g. --limit mythic), this role still works.
 - name: Install packages required for Mythic (Docker, git, curl)
-  apt:
+  ansible.builtin.apt:
     name:
       - apt-transport-https
       - ca-certificates
@@ -14,7 +14,7 @@
   when: ansible_os_family == "Debian"
 
 - name: Install Docker (get.docker.com)
-  shell: |
+  ansible.builtin.shell: |
     curl -fsSL https://get.docker.com -o get-docker.sh
     sh get-docker.sh
     usermod -aG docker ubuntu
@@ -22,36 +22,36 @@
     creates: /usr/bin/docker
 
 - name: Install Docker Compose (standalone binary)
-  get_url:
+  ansible.builtin.get_url:
     url: https://github.com/docker/compose/releases/latest/download/docker-compose-Linux-x86_64
     dest: /usr/local/bin/docker-compose
     mode: '0755'
 
 - name: Ensure Docker service is running
-  systemd:
+  ansible.builtin.systemd:
     name: docker
     state: started
     enabled: yes
 
 - name: Ensure /opt exists for Mythic install
-  file:
+  ansible.builtin.file:
     path: /opt
     state: directory
     mode: '0755'
 
 - name: Check if Mythic repo already exists
-  stat:
+  ansible.builtin.stat:
     path: /opt/mythic/.git
   register: mythic_git_check
 
 - name: Remove existing /opt/mythic when it is not a Mythic git checkout
-  file:
+  ansible.builtin.file:
     path: /opt/mythic
     state: absent
   when: not mythic_git_check.stat.exists
 
 - name: Clone Mythic repository
-  git:
+  ansible.builtin.git:
     repo: https://github.com/its-a-feature/Mythic.git
     dest: /opt/mythic
     version: master
@@ -60,7 +60,7 @@
   when: not mythic_git_check.stat.exists
 
 - name: Update Mythic repository (pull latest)
-  git:
+  ansible.builtin.git:
     repo: https://github.com/its-a-feature/Mythic.git
     dest: /opt/mythic
     version: master
@@ -68,14 +68,55 @@
     force: no
   when: mythic_git_check.stat.exists
 
+# Wildcard certs are synced to /etc/aegis/certs in site.yml before this role.
+# Mythic's nginx-docker maps nginx-docker/ssl/ -> /etc/ssl/private in the mythic_nginx container.
+- name: Check for wildcard certificate material from redirector sync
+  ansible.builtin.stat:
+    path: /etc/aegis/certs/fullchain.pem
+  register: mythic_wildcard_cert
+
+- name: Ensure Mythic nginx-docker SSL directory exists
+  ansible.builtin.file:
+    path: /opt/mythic/nginx-docker/ssl
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: mythic_wildcard_cert.stat.exists
+
+- name: Copy wildcard chain and key into Mythic repo (nginx-docker/ssl -> /etc/ssl/private in container)
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    remote_src: true
+    mode: "{{ item.mode }}"
+  loop:
+    - { src: /etc/aegis/certs/fullchain.pem, dest: /opt/mythic/nginx-docker/ssl/fullchain.pem, mode: '0644' }
+    - { src: /etc/aegis/certs/privkey.pem, dest: /opt/mythic/nginx-docker/ssl/privkey.pem, mode: '0600' }
+  when: mythic_wildcard_cert.stat.exists
+
+- name: Point Mythic nginx template at fullchain/privkey under /etc/ssl/private
+  ansible.builtin.replace:
+    path: /opt/mythic/nginx-docker/config/templates/services.conf.template
+    regexp: '[[:space:]]*ssl_certificate[[:space:]]+/etc/ssl/private/mythic-cert\.crt;'
+    replace: ' ssl_certificate      /etc/ssl/private/fullchain.pem;'
+  when: mythic_wildcard_cert.stat.exists
+
+- name: Point Mythic nginx template at privkey under /etc/ssl/private
+  ansible.builtin.replace:
+    path: /opt/mythic/nginx-docker/config/templates/services.conf.template
+    regexp: '[[:space:]]*ssl_certificate_key[[:space:]]+/etc/ssl/private/mythic-ssl\.key;'
+    replace: ' ssl_certificate_key  /etc/ssl/private/privkey.pem;'
+  when: mythic_wildcard_cert.stat.exists
+
 - name: Build mythic-cli binary (uses Docker to extract from official image)
-  command: make
+  ansible.builtin.command: make
   args:
     chdir: /opt/mythic
     creates: /opt/mythic/mythic-cli
 
 - name: Start Mythic services (mythic-cli start)
-  command: ./mythic-cli start
+  ansible.builtin.command: ./mythic-cli start
   args:
     chdir: /opt/mythic
   register: mythic_start
@@ -85,7 +126,7 @@
   changed_when: mythic_start.rc == 0
 
 - name: Ensure Mythic is running (retry start if first run failed)
-  command: ./mythic-cli start
+  ansible.builtin.command: ./mythic-cli start
   args:
     chdir: /opt/mythic
   when: mythic_start.rc != 0
@@ -95,11 +136,11 @@
 
 # Install C2 profiles and agents (download Docker images; 30s between each).
 - name: Wait for Mythic to be ready before installing profiles/agents
-  pause:
+  ansible.builtin.pause:
     seconds: 30
 
 - name: Install C2 profile – HTTP
-  command: ./mythic-cli install github https://github.com/MythicC2Profiles/http
+  ansible.builtin.command: ./mythic-cli install github https://github.com/MythicC2Profiles/http
   args:
     chdir: /opt/mythic
   register: _install_http
@@ -107,11 +148,11 @@
   changed_when: _install_http.rc == 0
 
 - name: Pause 30s after HTTP profile
-  pause:
+  ansible.builtin.pause:
     seconds: 30
 
 - name: Install C2 profile – DNS
-  command: ./mythic-cli install github https://github.com/MythicC2Profiles/dns
+  ansible.builtin.command: ./mythic-cli install github https://github.com/MythicC2Profiles/dns
   args:
     chdir: /opt/mythic
   register: _install_dns
@@ -119,11 +160,11 @@
   changed_when: _install_dns.rc == 0
 
 - name: Pause 30s after DNS profile
-  pause:
+  ansible.builtin.pause:
     seconds: 30
 
 - name: Install C2 profile – HTTPX
-  command: ./mythic-cli install github https://github.com/MythicC2Profiles/httpx
+  ansible.builtin.command: ./mythic-cli install github https://github.com/MythicC2Profiles/httpx
   args:
     chdir: /opt/mythic
   register: _install_httpx
@@ -131,11 +172,11 @@
   changed_when: _install_httpx.rc == 0
 
 - name: Pause 30s after HTTPX profile
-  pause:
+  ansible.builtin.pause:
     seconds: 30
 
 - name: Install agent – Apollo
-  command: ./mythic-cli install github https://github.com/MythicAgents/Apollo
+  ansible.builtin.command: ./mythic-cli install github https://github.com/MythicAgents/Apollo
   args:
     chdir: /opt/mythic
   register: _install_apollo
@@ -143,11 +184,11 @@
   changed_when: _install_apollo.rc == 0
 
 - name: Pause 30s after Apollo agent
-  pause:
+  ansible.builtin.pause:
     seconds: 30
 
 - name: Install agent – Poseidon
-  command: ./mythic-cli install github https://github.com/MythicAgents/poseidon
+  ansible.builtin.command: ./mythic-cli install github https://github.com/MythicAgents/poseidon
   args:
     chdir: /opt/mythic
   register: _install_poseidon

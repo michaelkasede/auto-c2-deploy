@@ -1,6 +1,6 @@
 ---
 - name: Create GoPhish directory structure
-  file:
+  ansible.builtin.file:
     path: "/opt/gophish/{{ item }}"
     state: directory
     mode: '0755'
@@ -8,12 +8,31 @@
     - data
     - ssl
 
+# Wildcard certs are synced to private VMs in site.yml (Distribute wildcard certs play).
+# GoPhish admin HTTPS (port 3333) expects gophish_admin.crt / gophish_admin.key under ./ssl (mounted in container).
+- name: Check for synced wildcard certificate material
+  ansible.builtin.stat:
+    path: /etc/aegis/certs/fullchain.pem
+  register: aegis_fullchain
+
+- name: Stage TLS material for GoPhish admin UI
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    remote_src: true
+    mode: "{{ item.mode }}"
+  loop:
+    - { src: /etc/aegis/certs/fullchain.pem, dest: /opt/gophish/ssl/gophish_admin.crt, mode: '0644' }
+    - { src: /etc/aegis/certs/privkey.pem, dest: /opt/gophish/ssl/gophish_admin.key, mode: '0600' }
+  when: aegis_fullchain.stat.exists
+
 - name: Deploy GoPhish docker-compose
-  template:
+  ansible.builtin.template:
     src: docker-compose.yml.j2
     dest: /opt/gophish/docker-compose.yml
 
 - name: Start GoPhish
-  community.docker.docker_compose:
-    project_src: /opt/gophish
-    state: present
+  ansible.builtin.shell: |
+    docker compose -f /opt/gophish/docker-compose.yml up -d
+  args:
+    chdir: /opt/gophish

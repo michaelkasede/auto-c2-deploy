@@ -45,6 +45,10 @@ server {
     ssl_certificate /etc/letsencrypt/live/{{ base_domain }}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/{{ base_domain }}/privkey.pem;
 
+{% if stealth_level | default('high') != 'low' %}
+    include /etc/nginx/snippets/aegis-disable-metrics.conf;
+{% endif %}
+
     location / {
         # Host the decoy container locally on the redirector
         proxy_pass http://localhost:8080; 
@@ -61,6 +65,10 @@ server {
 
     ssl_certificate /etc/letsencrypt/live/{{ base_domain }}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/{{ base_domain }}/privkey.pem;
+
+{% if stealth_level | default('high') != 'low' %}
+    include /etc/nginx/snippets/aegis-disable-metrics.conf;
+{% endif %}
 
     # Mythic C2 Callback Paths
     location ~ ^({{ mythic_callback_paths | join('|') }}) {
@@ -86,6 +94,10 @@ server {
     ssl_certificate /etc/letsencrypt/live/{{ base_domain }}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/{{ base_domain }}/privkey.pem;
 
+{% if stealth_level | default('high') != 'low' %}
+    include /etc/nginx/snippets/aegis-disable-metrics.conf;
+{% endif %}
+
     location / {
         # Public phishing site entry (victim traffic)
         proxy_pass http://gophish_public_backend;
@@ -101,6 +113,10 @@ server {
 
     ssl_certificate /etc/letsencrypt/live/{{ base_domain }}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/{{ base_domain }}/privkey.pem;
+
+{% if stealth_level | default('high') != 'low' %}
+    include /etc/nginx/snippets/aegis-disable-metrics.conf;
+{% endif %}
 
     location / {
         # Operational domain (victim traffic)
@@ -119,6 +135,10 @@ server {
     ssl_certificate /etc/letsencrypt/live/{{ base_domain }}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/{{ base_domain }}/privkey.pem;
 
+{% if stealth_level | default('high') != 'low' %}
+    include /etc/nginx/snippets/aegis-disable-metrics.conf;
+{% endif %}
+
     location / {
         # Operational domain (payload delivery)
         proxy_pass http://pwndrop_backend;
@@ -135,6 +155,10 @@ server {
 
     ssl_certificate /etc/letsencrypt/live/{{ base_domain }}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/{{ base_domain }}/privkey.pem;
+
+{% if stealth_level | default('high') != 'low' %}
+    include /etc/nginx/snippets/aegis-disable-metrics.conf;
+{% endif %}
 
     # Non-operators see decoy
     if ($is_operator = 0) {

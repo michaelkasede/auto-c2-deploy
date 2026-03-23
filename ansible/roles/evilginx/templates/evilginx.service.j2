@@ -4,10 +4,13 @@ After=network.target
 
 [Service]
 Type=simple
+User=root
 WorkingDirectory=/opt/evilginx2
-ExecStart=/opt/evilginx2/evilginx
-Restart=always
-RestartSec=10
+# Evilginx2 uses an interactive readline loop; run under `script` to allocate a PTY (required for systemd).
+# -developer: self-signed TLS on 443; redirector proxies with proxy_ssl_verify off.
+ExecStart=/usr/bin/script -qc '/opt/evilginx2/evilginx -p /opt/evilginx2/phishlets -developer' /dev/null
+Restart=on-failure
+RestartSec=20
 
 [Install]
 WantedBy=multi-user.target

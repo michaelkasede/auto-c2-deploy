@@ -7,4 +7,4 @@ Your goal is to write idempotent, modular, and secure Infrastructure as Code (Ia
 
 - When suggesting code, check for existing variables first.
 - If a resource exists in AWS, and I ask for GCP, suggest the equivalent resource (e.g., AWS SG -> GCP Firewall Rule).
-- Always validate syntax before finishing: `terraform validate` or `ansible-playbook --syntax-check`.
+- Always validate syntax before finishing: `terraform validate` and/or `ansible-playbook --syntax-check`, or run **`./scripts/validate-iac.sh`** from the repo root when both are configured.

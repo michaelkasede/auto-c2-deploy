@@ -16,24 +16,24 @@
 - name: Distribute wildcard certs from redirector to private services
   hosts: mythic:gophish:evilginx:pwndrop
   become: yes
-  gather_facts: no
+  gather_facts: yes
   tasks:
     - name: Read wildcard fullchain from redirector
-      slurp:
+      ansible.builtin.slurp:
         src: "/etc/letsencrypt/live/{{ base_domain }}/fullchain.pem"
       delegate_to: "{{ groups['redirector'][0] }}"
       run_once: true
       register: wildcard_fullchain
 
     - name: Read wildcard private key from redirector
-      slurp:
+      ansible.builtin.slurp:
         src: "/etc/letsencrypt/live/{{ base_domain }}/privkey.pem"
       delegate_to: "{{ groups['redirector'][0] }}"
       run_once: true
       register: wildcard_privkey
 
     - name: Ensure certificate directory exists on private services
-      file:
+      ansible.builtin.file:
         path: /etc/aegis/certs
         state: directory
         owner: root
@@ -41,7 +41,7 @@
         mode: "0755"
 
     - name: Copy wildcard fullchain to private services
-      copy:
+      ansible.builtin.copy:
         content: "{{ wildcard_fullchain.content | b64decode }}"
         dest: /etc/aegis/certs/fullchain.pem
         owner: root
@@ -49,7 +49,7 @@
         mode: "0644"
 
     - name: Copy wildcard private key to private services
-      copy:
+      ansible.builtin.copy:
         content: "{{ wildcard_privkey.content | b64decode }}"
         dest: /etc/aegis/certs/privkey.pem
         owner: root

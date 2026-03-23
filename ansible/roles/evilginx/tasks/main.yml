@@ -1,35 +1,42 @@
 ---
+# `script` (util-linux) wraps evilginx in a PTY so readline works under systemd.
+- name: Ensure util-linux is present (provides /usr/bin/script)
+  ansible.builtin.apt:
+    name: util-linux
+    state: present
+  when: ansible_os_family == "Debian"
+
 - name: Install Go
-  unarchive:
+  ansible.builtin.unarchive:
     src: https://go.dev/dl/go1.21.0.linux-amd64.tar.gz
     dest: /usr/local
     remote_src: yes
     creates: /usr/local/go
 
 - name: Add Go to PATH
-  lineinfile:
+  ansible.builtin.lineinfile:
     path: /home/ubuntu/.bashrc
     line: 'export PATH=$PATH:/usr/local/go/bin'
     state: present
 
 - name: Clone Evilginx2
-  git:
+  ansible.builtin.git:
     repo: https://github.com/kgretzky/evilginx2.git
     dest: /opt/evilginx2
 
 - name: Build Evilginx2
-  shell: /usr/local/go/bin/go build -o evilginx
+  ansible.builtin.shell: /usr/local/go/bin/go build -o evilginx
   args:
     chdir: /opt/evilginx2
     creates: /opt/evilginx2/evilginx
 
 - name: Create Evilginx systemd service
-  template:
+  ansible.builtin.template:
     src: evilginx.service.j2
     dest: /etc/systemd/system/evilginx.service
 
 - name: Start and enable Evilginx
-  systemd:
+  ansible.builtin.systemd:
     name: evilginx
     state: started
     enabled: yes

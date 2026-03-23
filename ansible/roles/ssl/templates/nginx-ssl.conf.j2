@@ -25,6 +25,10 @@ server {
     client_max_body_size 10M;
     server_tokens off;
 
+{% if stealth_level | default('high') != 'low' %}
+    include /etc/nginx/snippets/aegis-disable-metrics.conf;
+{% endif %}
+
     location / {
         proxy_pass http://localhost:{{ service_port | default(8080) }};
         proxy_set_header Host $host;
