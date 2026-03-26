@@ -13,3 +13,19 @@ operator_allowlist: []
 
 # Decoy image (exposed only on redirector localhost:8080)
 decoy_image: "wordpress:latest"
+
+# Single LE lineage: certbot -d <base_domain> -d "*.<base_domain>" (default live dir is base_domain).
+redirector_ssl_cert_path: "/etc/letsencrypt/live/{{ base_domain }}/fullchain.pem"
+redirector_ssl_key_path: "/etc/letsencrypt/live/{{ base_domain }}/privkey.pem"
+
+# DNS-01: Certbot authenticator name (pip package is certbot-dns-<suffix>, suffix = authenticator without leading "dns-").
+# Examples: dns-duckdns (default), dns-cloudflare, dns-route53, dns-google, dns-azure, dns-rfc2136, …
+# For non-DuckDNS, set redirector_certbot_dns_plugin_options to the flags your plugin needs (see Certbot DNS docs).
+redirector_certbot_dns_plugin: dns-duckdns
+# Non-DuckDNS: e.g. [ "--dns-cloudflare-credentials", "/root/.secrets/cloudflare.ini" ]
+redirector_certbot_dns_plugin_options: []
+# Override pip package if auto-derived name is wrong (rare); leave empty to derive from redirector_certbot_dns_plugin.
+redirector_certbot_dns_pip_package: ""
+
+# DuckDNS only: match manual certbot propagation; override with DUCKDNS_PROPAGATION_SECONDS.
+redirector_duckdns_propagation_seconds: 60

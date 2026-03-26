@@ -42,8 +42,8 @@ server {
     listen 443 ssl;
     server_name {{ base_domain }};
 
-    ssl_certificate /etc/letsencrypt/live/{{ base_domain }}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/{{ base_domain }}/privkey.pem;
+    ssl_certificate {{ redirector_ssl_cert_path }};
+    ssl_certificate_key {{ redirector_ssl_key_path }};
 
 {% if stealth_level | default('high') != 'low' %}
     include /etc/nginx/snippets/aegis-disable-metrics.conf;
@@ -63,8 +63,8 @@ server {
     listen 443 ssl;
     server_name {{ c2_domain }};
 
-    ssl_certificate /etc/letsencrypt/live/{{ base_domain }}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/{{ base_domain }}/privkey.pem;
+    ssl_certificate {{ redirector_ssl_cert_path }};
+    ssl_certificate_key {{ redirector_ssl_key_path }};
 
 {% if stealth_level | default('high') != 'low' %}
     include /etc/nginx/snippets/aegis-disable-metrics.conf;
@@ -91,8 +91,8 @@ server {
     listen 443 ssl;
     server_name {{ mail_domain }};
 
-    ssl_certificate /etc/letsencrypt/live/{{ base_domain }}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/{{ base_domain }}/privkey.pem;
+    ssl_certificate {{ redirector_ssl_cert_path }};
+    ssl_certificate_key {{ redirector_ssl_key_path }};
 
 {% if stealth_level | default('high') != 'low' %}
     include /etc/nginx/snippets/aegis-disable-metrics.conf;
@@ -111,8 +111,8 @@ server {
     listen 443 ssl;
     server_name {{ login_domain }};
 
-    ssl_certificate /etc/letsencrypt/live/{{ base_domain }}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/{{ base_domain }}/privkey.pem;
+    ssl_certificate {{ redirector_ssl_cert_path }};
+    ssl_certificate_key {{ redirector_ssl_key_path }};
 
 {% if stealth_level | default('high') != 'low' %}
     include /etc/nginx/snippets/aegis-disable-metrics.conf;
@@ -132,8 +132,8 @@ server {
     listen 443 ssl;
     server_name {{ cdn_domain }};
 
-    ssl_certificate /etc/letsencrypt/live/{{ base_domain }}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/{{ base_domain }}/privkey.pem;
+    ssl_certificate {{ redirector_ssl_cert_path }};
+    ssl_certificate_key {{ redirector_ssl_key_path }};
 
 {% if stealth_level | default('high') != 'low' %}
     include /etc/nginx/snippets/aegis-disable-metrics.conf;
@@ -153,8 +153,8 @@ server {
     listen 443 ssl;
     server_name ops.{{ base_domain }};
 
-    ssl_certificate /etc/letsencrypt/live/{{ base_domain }}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/{{ base_domain }}/privkey.pem;
+    ssl_certificate {{ redirector_ssl_cert_path }};
+    ssl_certificate_key {{ redirector_ssl_key_path }};
 
 {% if stealth_level | default('high') != 'low' %}
     include /etc/nginx/snippets/aegis-disable-metrics.conf;

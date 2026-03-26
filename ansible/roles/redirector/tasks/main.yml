@@ -12,24 +12,47 @@
       - python3-pip
     state: present
 
-- name: Install Certbot DuckDNS DNS plugin
+- name: Resolve Certbot DNS pip package name
+  ansible.builtin.set_fact:
+    redirector_certbot_dns_pip_package_resolved: >-
+      {{
+        redirector_certbot_dns_pip_package
+        if (redirector_certbot_dns_pip_package | default('', true) | length) > 0
+        else ('certbot-dns-' ~ (redirector_certbot_dns_plugin | regex_replace('^dns-', '')))
+      }}
+
+- name: Install Certbot DNS plugin (pip)
   ansible.builtin.pip:
-    name: certbot-dns-duckdns
+    name: "{{ redirector_certbot_dns_pip_package_resolved }}"
     state: present
     executable: pip3
 
-- name: Resolve DUCKDNS_TOKEN and CERTBOT_EMAIL from environment
+- name: Resolve CERTBOT_EMAIL, DUCKDNS_TOKEN (optional), and optional DNS propagation wait
   ansible.builtin.set_fact:
-    duckdns_token: "{{ lookup('env', 'DUCKDNS_TOKEN') | trim }}"
     certbot_email: "{{ lookup('env', 'CERTBOT_EMAIL') | trim }}"
+    duckdns_token: "{{ lookup('env', 'DUCKDNS_TOKEN') | trim }}"
+    duckdns_propagation_seconds: >-
+      {{ (lookup('env', 'DUCKDNS_PROPAGATION_SECONDS') | default(redirector_duckdns_propagation_seconds | string, true) | trim) | int }}
 
-- name: Require DUCKDNS_TOKEN for DNS-01 certificate issuance
+- name: Require DUCKDNS_TOKEN when using dns-duckdns
   ansible.builtin.assert:
     that:
       - duckdns_token | length > 0
     fail_msg: >-
-      DUCKDNS_TOKEN is not set.  Export it before running the playbook:
+      redirector_certbot_dns_plugin is dns-duckdns but DUCKDNS_TOKEN is not set. Export it:
         export DUCKDNS_TOKEN="your-token"
+  when: redirector_certbot_dns_plugin == 'dns-duckdns'
+
+- name: Require DNS plugin CLI options when not using DuckDNS
+  ansible.builtin.assert:
+    that:
+      - redirector_certbot_dns_plugin_options | length > 0
+    fail_msg: >-
+      For redirector_certbot_dns_plugin other than dns-duckdns, set redirector_certbot_dns_plugin_options
+      to the certbot flags your provider needs (install the matching pip plugin above). Example for Cloudflare:
+        redirector_certbot_dns_plugin: dns-cloudflare
+        redirector_certbot_dns_plugin_options: ["--dns-cloudflare-credentials", "/root/.secrets/cloudflare.ini"]
+  when: redirector_certbot_dns_plugin != 'dns-duckdns'
 
 - name: Require CERTBOT_EMAIL for certificate issuance
   ansible.builtin.assert:
@@ -39,18 +62,50 @@
       CERTBOT_EMAIL is not set.  Export it before running the playbook:
         export CERTBOT_EMAIL="you@example.com"
 
-- name: Request SSL Certificates
-  ansible.builtin.command: >
-    certbot certonly
-    --authenticator dns-duckdns
-    --preferred-challenges dns
-    --dns-duckdns-token {{ duckdns_token }}
-    --dns-duckdns-propagation-seconds 120
-    -d {{ base_domain }}
-    -d *.{{ base_domain }}
-    --non-interactive --agree-tos --email {{ certbot_email }}
+# Same pattern as: certbot certonly --authenticator <plugin> ... -d <base> -d "*.<base>"
+- name: Request SSL certificate (apex + wildcard, DuckDNS)
+  ansible.builtin.command:
+    argv:
+      - certbot
+      - certonly
+      - --non-interactive
+      - --agree-tos
+      - --email
+      - "{{ certbot_email }}"
+      - --preferred-challenges
+      - dns
+      - --authenticator
+      - "{{ redirector_certbot_dns_plugin }}"
+      - --dns-duckdns-token
+      - "{{ duckdns_token }}"
+      - --dns-duckdns-propagation-seconds
+      - "{{ duckdns_propagation_seconds | string }}"
+      - -d
+      - "{{ base_domain }}"
+      - -d
+      - "*.{{ base_domain }}"
   args:
-    creates: "/etc/letsencrypt/live/{{ base_domain }}/fullchain.pem"
+    creates: "{{ redirector_ssl_cert_path }}"
+  when: redirector_certbot_dns_plugin == 'dns-duckdns'
+
+- name: Request SSL certificate (apex + wildcard, custom DNS plugin)
+  ansible.builtin.command:
+    argv: "{{ certbot_certonly_argv }}"
+  vars:
+    certbot_certonly_argv: >-
+      {{
+        (
+          [
+            'certbot', 'certonly', '--non-interactive', '--agree-tos', '--email', certbot_email,
+            '--preferred-challenges', 'dns', '--authenticator', redirector_certbot_dns_plugin
+          ]
+          + redirector_certbot_dns_plugin_options
+          + ['-d', base_domain, '-d', '*.' ~ base_domain]
+        )
+      }}
+  args:
+    creates: "{{ redirector_ssl_cert_path }}"
+  when: redirector_certbot_dns_plugin != 'dns-duckdns'
 
 - name: Create decoy directory
   ansible.builtin.file:
