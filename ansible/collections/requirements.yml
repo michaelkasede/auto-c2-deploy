@@ -1,5 +1,4 @@
 ---
 # Install: ansible-galaxy collection install -r ansible/collections/requirements.yml
-collections:
-  - name: community.docker
-    version: ">=3.4.0"
+# (Empty is OK — roles use ansible.builtin / ansible.legacy only.)
+collections: []

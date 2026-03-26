@@ -1,6 +1,5 @@
 ---
-# Ensure Docker is installed (mythic-cli and Mythic services require it).
-# If the common role was skipped (e.g. --limit mythic), this role still works.
+# Docker is installed only here for Mythic (mythic-cli / containers). Other hosts do not use Docker.
 - name: Install packages required for Mythic (Docker, git, curl)
   ansible.builtin.apt:
     name:
@@ -25,7 +24,7 @@
   ansible.builtin.get_url:
     url: https://github.com/docker/compose/releases/latest/download/docker-compose-Linux-x86_64
     dest: /usr/local/bin/docker-compose
-    mode: '0755'
+    mode: "0755"
 
 - name: Ensure Docker service is running
   ansible.builtin.systemd:
@@ -37,7 +36,7 @@
   ansible.builtin.file:
     path: /opt
     state: directory
-    mode: '0755'
+    mode: "0755"
 
 - name: Check if Mythic repo already exists
   ansible.builtin.stat:
@@ -81,7 +80,7 @@
     state: directory
     owner: root
     group: root
-    mode: '0755'
+    mode: "0755"
   when: mythic_wildcard_cert.stat.exists
 
 - name: Copy wildcard chain and key into Mythic repo (nginx-docker/ssl -> /etc/ssl/private in container)
@@ -91,22 +90,32 @@
     remote_src: true
     mode: "{{ item.mode }}"
   loop:
-    - { src: /etc/aegis/certs/fullchain.pem, dest: /opt/mythic/nginx-docker/ssl/fullchain.pem, mode: '0644' }
-    - { src: /etc/aegis/certs/privkey.pem, dest: /opt/mythic/nginx-docker/ssl/privkey.pem, mode: '0600' }
+    - {
+        src: /etc/aegis/certs/fullchain.pem,
+        dest: /opt/mythic/nginx-docker/ssl/fullchain.pem,
+        mode: "0644",
+      }
+    - {
+        src: /etc/aegis/certs/privkey.pem,
+        dest: /opt/mythic/nginx-docker/ssl/privkey.pem,
+        mode: "0600",
+      }
   when: mythic_wildcard_cert.stat.exists
 
-- name: Point Mythic nginx template at fullchain/privkey under /etc/ssl/private
+# Upstream template uses mythic-cert.crt / mythic-ssl.key; replace path only so edits match any whitespace.
+# Copies above place fullchain.pem and privkey.pem into nginx-docker/ssl/ -> /etc/ssl/private in container.
+- name: Point Mythic nginx template at LE fullchain (services.conf.template)
   ansible.builtin.replace:
     path: /opt/mythic/nginx-docker/config/templates/services.conf.template
-    regexp: '[[:space:]]*ssl_certificate[[:space:]]+/etc/ssl/private/mythic-cert\.crt;'
-    replace: ' ssl_certificate      /etc/ssl/private/fullchain.pem;'
+    regexp: '/etc/ssl/private/mythic-cert\.crt'
+    replace: "/etc/ssl/private/fullchain.pem"
   when: mythic_wildcard_cert.stat.exists
 
-- name: Point Mythic nginx template at privkey under /etc/ssl/private
+- name: Point Mythic nginx template at LE privkey (services.conf.template)
   ansible.builtin.replace:
     path: /opt/mythic/nginx-docker/config/templates/services.conf.template
-    regexp: '[[:space:]]*ssl_certificate_key[[:space:]]+/etc/ssl/private/mythic-ssl\.key;'
-    replace: ' ssl_certificate_key  /etc/ssl/private/privkey.pem;'
+    regexp: '/etc/ssl/private/mythic-ssl\.key'
+    replace: "/etc/ssl/private/privkey.pem"
   when: mythic_wildcard_cert.stat.exists
 
 - name: Build mythic-cli binary (uses Docker to extract from official image)
@@ -115,24 +124,27 @@
     chdir: /opt/mythic
     creates: /opt/mythic/mythic-cli
 
+# mythic-cli start pulls images and can take many minutes; short async timeouts fail with no .rc on the result.
 - name: Start Mythic services (mythic-cli start)
   ansible.builtin.command: ./mythic-cli start
   args:
     chdir: /opt/mythic
   register: mythic_start
-  async: 120
-  poll: 10
+  async: 7200
+  poll: 30
   failed_when: false
-  changed_when: mythic_start.rc == 0
+  changed_when: (mythic_start.rc | default(-1) | int) == 0
 
-- name: Ensure Mythic is running (retry start if first run failed)
+- name: Ensure Mythic is running (retry start if first run failed or timed out)
   ansible.builtin.command: ./mythic-cli start
   args:
     chdir: /opt/mythic
-  when: mythic_start.rc != 0
-  async: 180
-  poll: 15
-  failed_when: false  # mythic-cli may return non-zero when already running
+  when: (mythic_start.rc | default(-1) | int) != 0
+  register: mythic_start_retry
+  async: 7200
+  poll: 30
+  failed_when: false
+  changed_when: (mythic_start_retry.rc | default(-1) | int) == 0
 
 # Install C2 profiles and agents (download Docker images; 30s between each).
 - name: Wait for Mythic to be ready before installing profiles/agents

@@ -1,0 +1,5 @@
+---
+- name: Restart pwndrop
+  ansible.builtin.systemd:
+    name: pwndrop
+    state: restarted

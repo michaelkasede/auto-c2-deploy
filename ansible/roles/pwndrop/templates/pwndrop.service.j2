@@ -5,7 +5,8 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/etc/pwndrop
-ExecStart=/usr/local/bin/pwndrop
+# No --init in upstream; config + DB created on first start. -no-autocert/-no-dns: redirector terminates TLS; no DNS server on this host.
+ExecStart=/usr/local/bin/pwndrop -config /etc/pwndrop/pwndrop.ini -no-autocert -no-dns
 Restart=always
 RestartSec=10
 

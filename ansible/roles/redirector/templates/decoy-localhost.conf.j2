@@ -1,0 +1,10 @@
+# Static decoy on loopback only (smart redirector proxies to 127.0.0.1:8080). No Docker.
+server {
+    listen 127.0.0.1:8080;
+    server_name _;
+    root {{ decoy_static_root | default('/opt/decoy/html') }};
+    index index.html;
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

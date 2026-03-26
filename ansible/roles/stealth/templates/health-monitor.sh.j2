@@ -1,6 +1,16 @@
 #!/bin/bash
 # Health monitoring with basic metrics for {{ service_name }}
-CONTAINER_STATUS=$(docker ps --format 'table {{.Names}}\t{{.Status}}' | grep {{ service_name }})
-MEMORY_USAGE=$(docker stats --no-stream --format 'table {{.MemPerc}}' {{ service_name }} | tail -n +2)
-echo "$(date): {{ service_name }} Status: $CONTAINER_STATUS"
-echo "$(date): Memory Usage: $MEMORY_USAGE"
+{% if service_name == 'mythic' %}
+if command -v docker >/dev/null 2>&1; then
+  CONTAINER_STATUS=$(docker ps --format 'table {{.Names}}\t{{.Status}}' 2>/dev/null | grep -E 'mythic|{{ service_name }}' || true)
+  echo "$(date): {{ service_name }} docker: $CONTAINER_STATUS"
+else
+  echo "$(date): docker not installed"
+fi
+{% else %}
+if systemctl is-active --quiet {{ service_name }} 2>/dev/null; then
+  echo "$(date): {{ service_name }} systemd: active"
+else
+  echo "$(date): {{ service_name }} systemd: inactive"
+fi
+{% endif %}

@@ -1,38 +1,178 @@
 ---
-- name: Create GoPhish directory structure
+# Prerequisites (bootstrap-style: ca certs, curl, jq, unzip)
+- name: Install packages required for GoPhish install
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - jq
+      - unzip
+    state: present
+    update_cache: true
+  when: ansible_os_family == "Debian"
+
+- name: Ensure GoPhish install root exists
+  ansible.builtin.file:
+    path: /opt/gophish
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+
+- name: Check for existing GoPhish binary
+  ansible.builtin.stat:
+    path: /opt/gophish/gophish
+  register: gophish_binary_stat
+
+- name: Query GitHub API for latest GoPhish linux-64bit zip URL
+  ansible.builtin.shell: |
+    set -euo pipefail
+    curl -fsSL https://api.github.com/repos/gophish/gophish/releases/latest \
+      | jq -r '.assets[] | select(.name | test("linux-64bit\\.zip$")) | .browser_download_url' \
+      | head -1
+  args:
+    executable: /bin/bash
+  register: gophish_latest_url
+  changed_when: false
+  when:
+    - ansible_os_family == "Debian"
+    - not gophish_binary_stat.stat.exists
+    - (gophish_download_url | default('', true) | length) == 0
+    - gophish_use_latest | default(true) | bool
+
+- name: Set GoPhish download URL to install or upgrade
+  ansible.builtin.set_fact:
+    gophish_download_url_resolved: >-
+      {{
+        (
+          gophish_download_url | trim
+          if (gophish_download_url | default('', true) | length) > 0
+          else (
+            (gophish_latest_url.stdout | default('') | trim)
+            if (gophish_use_latest | default(true) | bool) and (gophish_latest_url is defined) and (gophish_latest_url.stdout | default('') | length) > 0
+            else (
+              'https://github.com/gophish/gophish/releases/download/'
+              ~ gophish_version ~ '/gophish-' ~ gophish_version ~ '-linux-64bit.zip'
+            )
+          )
+        )
+      }}
+  when: not gophish_binary_stat.stat.exists
+
+- name: Download GoPhish release
+  ansible.builtin.get_url:
+    url: "{{ gophish_download_url_resolved }}"
+    dest: /tmp/gophish-linux.zip
+    mode: "0644"
+    timeout: 180
+    validate_certs: true
+  when:
+    - not gophish_binary_stat.stat.exists
+    - (gophish_download_url_resolved | default('', true) | length) > 0
+
+- name: Extract GoPhish zip into /opt/gophish
+  ansible.builtin.unarchive:
+    src: /tmp/gophish-linux.zip
+    dest: /opt/gophish
+    remote_src: true
+    owner: ubuntu
+    group: ubuntu
+  when: not gophish_binary_stat.stat.exists
+
+- name: Flatten GoPhish release layout if needed
+  ansible.builtin.shell: |
+    set -euo pipefail
+    # Zip may leave gophish non-executable until the next task; use -f not -x.
+    if [ -f /opt/gophish/gophish ]; then exit 0; fi
+    shopt -s nullglob
+    for d in /opt/gophish/*/; do
+      d="${d%/}"
+      if [ -d "$d" ] && [ -f "$d/gophish" ]; then
+        shopt -s dotglob
+        mv "$d"/* /opt/gophish/
+        rmdir "$d" 2>/dev/null || true
+        exit 0
+      fi
+    done
+    for d in /opt/gophish/gophish-*linux* /opt/gophish/gophish_*; do
+      if [ -d "$d" ] && [ -f "$d/gophish" ]; then
+        shopt -s dotglob
+        mv "$d"/* /opt/gophish/
+        rmdir "$d" 2>/dev/null || true
+        exit 0
+      fi
+    done
+    # Any nested gophish binary (odd zip layout)
+    nested="$(find /opt/gophish -mindepth 2 -maxdepth 4 -name gophish -type f 2>/dev/null | head -1)"
+    if [ -n "$nested" ]; then
+      parent="$(dirname "$nested")"
+      shopt -s dotglob
+      mv "$parent"/* /opt/gophish/
+      rmdir "$parent" 2>/dev/null || true
+      exit 0
+    fi
+    exit 1
+  args:
+    executable: /bin/bash
+  when: not gophish_binary_stat.stat.exists
+
+- name: Ensure gophish binary is executable
+  ansible.builtin.file:
+    path: /opt/gophish/gophish
+    mode: '0755'
+    owner: ubuntu
+    group: ubuntu
+
+- name: Assert GoPhish binary exists
+  ansible.builtin.stat:
+    path: /opt/gophish/gophish
+  register: gophish_bin_check
+
+- name: Fail when GoPhish binary is missing after install
+  ansible.builtin.assert:
+    that:
+      - gophish_bin_check.stat.exists
+      - gophish_bin_check.stat.isreg
+    fail_msg: >-
+      GoPhish binary not found at /opt/gophish/gophish after install.
+      Check GitHub asset layout or set gophish_download_url.
+
+- name: Create GoPhish data and ssl directories
   ansible.builtin.file:
     path: "/opt/gophish/{{ item }}"
     state: directory
+    owner: ubuntu
+    group: ubuntu
     mode: '0755'
   loop:
     - data
     - ssl
 
-# Wildcard certs are synced to private VMs in site.yml (Distribute wildcard certs play).
-# GoPhish admin HTTPS (port 3333) expects gophish_admin.crt / gophish_admin.key under ./ssl (mounted in container).
-- name: Check for synced wildcard certificate material
-  ansible.builtin.stat:
-    path: /etc/aegis/certs/fullchain.pem
-  register: aegis_fullchain
-
-- name: Stage TLS material for GoPhish admin UI
-  ansible.builtin.copy:
-    src: "{{ item.src }}"
-    dest: "{{ item.dest }}"
-    remote_src: true
-    mode: "{{ item.mode }}"
-  loop:
-    - { src: /etc/aegis/certs/fullchain.pem, dest: /opt/gophish/ssl/gophish_admin.crt, mode: '0644' }
-    - { src: /etc/aegis/certs/privkey.pem, dest: /opt/gophish/ssl/gophish_admin.key, mode: '0600' }
-  when: aegis_fullchain.stat.exists
-
-- name: Deploy GoPhish docker-compose
+# TLS is terminated on the redirector; admin listens on plain HTTP inside the VPC (see config.json.j2).
+- name: Deploy GoPhish config (listen 0.0.0.0:3333, phish on 8080, use_tls false, trusted_origins for ops)
   ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: /opt/gophish/docker-compose.yml
+    src: config.json.j2
+    dest: /opt/gophish/config.json
+    owner: ubuntu
+    group: ubuntu
+    mode: '0644'
+  notify: Restart gophish
 
-- name: Start GoPhish
-  ansible.builtin.shell: |
-    docker compose -f /opt/gophish/docker-compose.yml up -d
-  args:
-    chdir: /opt/gophish
+- name: Deploy GoPhish systemd unit
+  ansible.builtin.template:
+    src: gophish.service.j2
+    dest: /etc/systemd/system/gophish.service
+    mode: '0644'
+  register: gophish_unit_deploy
+
+- name: Reload systemd after unit file change
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: gophish_unit_deploy.changed | bool
+
+- name: Enable and start GoPhish
+  ansible.builtin.systemd:
+    name: gophish
+    state: started
+    enabled: true
+    daemon_reload: true

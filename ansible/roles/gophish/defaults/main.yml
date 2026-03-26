@@ -1,0 +1,7 @@
+---
+# If true, resolve the zip URL from GitHub API (latest release, linux-64bit zip). If false, use gophish_version.
+gophish_use_latest: true
+# Pinned tag when gophish_use_latest is false (e.g. v0.12.1). Asset: gophish-<version>-linux-64bit.zip
+gophish_version: "v0.12.1"
+# Non-empty: use this URL instead of API / pinned pattern.
+gophish_download_url: ""

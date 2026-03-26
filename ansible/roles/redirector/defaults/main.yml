@@ -7,12 +7,20 @@ mythic_callback_paths:
   - /ws.*
   - /socket.io/.*
 
-# IPs/CIDRs allowed to reach management/service backends via the redirector.
-# Non-operators are served the decoy site.
+# IPs/CIDRs allowed as "operators" on ops.<base_domain> (Mythic/GoPhish admin/etc.).
+# Empty list = all clients treated as operators there. Non-empty = only these CIDRs (others get decoy).
 operator_allowlist: []
 
-# Decoy image (exposed only on redirector localhost:8080)
-decoy_image: "wordpress:latest"
+# Decoy: nginx serves static files from decoy_static_root (127.0.0.1:8080; copied from controller).
+# Source on the Ansible controller defaults to <repo>/decoy-website/ (sibling of ansible/).
+# Override: redirector_decoy_website_src: "/path/to/site"
+decoy_static_root: "/opt/decoy/html"
+
+# After stream SNI split: http{} terminates TLS on this port (not 443). Public 443 is stream layer.
+redirector_internal_ssl_port: 8443
+
+# Pwndrop HTTP listen port (must match pwndrop.ini http_port; upstream default is 80, not 8080).
+pwndrop_http_port: 80
 
 # Single LE lineage: certbot -d <base_domain> -d "*.<base_domain>" (default live dir is base_domain).
 redirector_ssl_cert_path: "/etc/letsencrypt/live/{{ base_domain }}/fullchain.pem"
@@ -27,5 +35,6 @@ redirector_certbot_dns_plugin_options: []
 # Override pip package if auto-derived name is wrong (rare); leave empty to derive from redirector_certbot_dns_plugin.
 redirector_certbot_dns_pip_package: ""
 
-# DuckDNS only: match manual certbot propagation; override with DUCKDNS_PROPAGATION_SECONDS.
-redirector_duckdns_propagation_seconds: 60
+# DuckDNS only: seconds to wait after TXT update before LE checks (60 is often too low for global resolvers).
+# Override per run: export DUCKDNS_PROPAGATION_SECONDS=180
+redirector_duckdns_propagation_seconds: 180

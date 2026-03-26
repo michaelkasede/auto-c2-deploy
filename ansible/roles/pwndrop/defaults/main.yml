@@ -1,0 +1,11 @@
+---
+# If true, resolve tarball URL from GitHub API (latest release, linux-x64). If false, use static latest-download URL below.
+pwndrop_use_latest: true
+# Non-empty: full URL to pwndrop linux tarball (overrides API / pattern).
+pwndrop_download_url: ""
+# Must match redirector upstream (roles/redirector/defaults: pwndrop_http_port).
+pwndrop_http_port: 80
+pwndrop_https_port: 443
+pwndrop_listen_ip: "0.0.0.0"
+pwndrop_data_dir: /var/lib/pwndrop
+pwndrop_admin_dir: /opt/pwndrop/admin

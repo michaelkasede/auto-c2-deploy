@@ -112,17 +112,64 @@
     path: /opt/decoy
     state: directory
     mode: '0755'
+  tags: [redirector_config, update_decoy]
 
-- name: Deploy Decoy docker-compose
+- name: Create decoy static document root
+  ansible.builtin.file:
+    path: "{{ decoy_static_root | default('/opt/decoy/html') }}"
+    state: directory
+    mode: '0755'
+  tags: [redirector_config, update_decoy]
+
+- name: Deploy static decoy website (repo decoy-website/ on controller by default)
+  ansible.builtin.copy:
+    src: "{{ redirector_decoy_website_src | default(playbook_dir ~ '/../decoy-website', true) }}/"
+    dest: "{{ decoy_static_root | default('/opt/decoy/html') }}/"
+    mode: "0644"
+    directory_mode: "0755"
+  tags: [redirector_config, update_decoy]
+
+- name: Deploy nginx listener for static decoy (127.0.0.1:8080, no Docker)
   ansible.builtin.template:
-    src: decoy-docker-compose.yml.j2
-    dest: /opt/decoy/docker-compose.yml
+    src: decoy-localhost.conf.j2
+    dest: /etc/nginx/sites-available/aegis-decoy-localhost.conf
+    mode: '0644'
+  notify: Reload Nginx
+  tags: [redirector_config, update_decoy]
 
-- name: Start Decoy container
-  ansible.builtin.shell: |
-    docker compose -f /opt/decoy/docker-compose.yml up -d
-  args:
-    chdir: /opt/decoy
+- name: Enable static decoy site
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/aegis-decoy-localhost.conf
+    dest: /etc/nginx/sites-enabled/aegis-decoy-localhost.conf
+    state: link
+  notify: Reload Nginx
+  tags: [redirector_config, update_decoy]
+
+- name: Ensure nginx stream.d directory exists
+  ansible.builtin.file:
+    path: /etc/nginx/stream.d
+    state: directory
+    mode: '0755'
+  tags: [redirector_config, update_decoy]
+
+- name: Deploy stream SNI passthrough (443 -> Evilginx or local TLS on internal port)
+  ansible.builtin.template:
+    src: nginx-stream-evilginx.conf.j2
+    dest: /etc/nginx/stream.d/aegis-evilginx.conf
+    mode: '0644'
+  notify: Reload Nginx
+  tags: [redirector_config, update_decoy]
+
+- name: Ensure main nginx.conf includes stream.d
+  ansible.builtin.blockinfile:
+    path: /etc/nginx/nginx.conf
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - aegis stream"
+    block: |
+      stream {
+          include /etc/nginx/stream.d/*.conf;
+      }
+  notify: Reload Nginx
+  tags: [redirector_config, update_decoy]
 
 - name: Deploy Smart Redirector configuration
   ansible.builtin.template:

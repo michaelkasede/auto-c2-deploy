@@ -1,40 +1,245 @@
 ---
-- name: Download Pwndrop
-  ansible.builtin.get_url:
-    url: https://github.com/kgretzky/pwndrop/releases/latest/download/pwndrop-linux-x64.tar.gz
-    dest: /tmp/pwndrop.tar.gz
+# Prerequisites: curl + jq for GitHub API (same idea as manual bootstrap)
+- name: Install packages required for Pwndrop install
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - jq
+    state: present
+    update_cache: true
+  when: ansible_os_family == "Debian"
 
-- name: Extract Pwndrop
+- name: Check for existing Pwndrop binary
+  ansible.builtin.stat:
+    path: /usr/local/bin/pwndrop
+    follow: true
+  register: pwndrop_binary_stat
+
+- name: Decide whether to download and install Pwndrop
+  ansible.builtin.set_fact:
+    pwndrop_do_install: >-
+      {{
+        not (
+          (pwndrop_binary_stat.stat.exists | default(false))
+          and (pwndrop_binary_stat.stat.isreg | default(false))
+        )
+      }}
+
+- name: Check for pwndrop admin static assets (from release tarball)
+  ansible.builtin.stat:
+    path: "{{ pwndrop_admin_dir | default('/opt/pwndrop/admin') }}"
+  register: pwndrop_admin_stat
+
+- name: Decide whether tarball is needed (binary install or missing admin/)
+  ansible.builtin.set_fact:
+    pwndrop_download_tarball: >-
+      {{
+        (pwndrop_do_install | bool)
+        or not (
+          (pwndrop_admin_stat.stat.exists | default(false))
+          and (pwndrop_admin_stat.stat.isdir | default(false))
+        )
+      }}
+
+- name: Query GitHub API for latest Pwndrop linux-amd64 tarball URL
+  ansible.builtin.shell: |
+    set -euo pipefail
+    curl -fsSL https://api.github.com/repos/kgretzky/pwndrop/releases/latest \
+      | jq -r '.assets[] | select(.name | test("linux-amd64\\.tar\\.gz$")) | .browser_download_url' \
+      | head -1
+  args:
+    executable: /bin/bash
+  register: pwndrop_latest_url
+  changed_when: false
+  when:
+    - ansible_os_family == "Debian"
+    - pwndrop_download_tarball | bool
+    - (pwndrop_download_url | default('', true) | length) == 0
+    - pwndrop_use_latest | default(true) | bool
+
+- name: Set Pwndrop download URL
+  ansible.builtin.set_fact:
+    pwndrop_download_url_resolved: >-
+      {{
+        (
+          pwndrop_download_url | trim
+          if (pwndrop_download_url | default('', true) | length) > 0
+          else (
+            (pwndrop_latest_url.stdout | default('') | trim)
+            if (pwndrop_use_latest | default(true) | bool) and (pwndrop_latest_url is defined) and (pwndrop_latest_url.stdout | default('') | length) > 0
+            else (
+              'https://github.com/kgretzky/pwndrop/releases/latest/download/pwndrop-linux-amd64.tar.gz'
+            )
+          )
+        )
+      }}
+  when: pwndrop_download_tarball | bool
+
+- name: Download Pwndrop release
+  ansible.builtin.get_url:
+    url: "{{ pwndrop_download_url_resolved }}"
+    dest: /tmp/pwndrop.tar.gz
+    mode: "0644"
+    timeout: 180
+    validate_certs: true
+  when:
+    - pwndrop_download_tarball | bool
+    - (pwndrop_download_url_resolved | default('', true) | length) > 0
+
+# Extract to a staging dir so we never leave a *directory* at /usr/local/bin/pwndrop (that breaks stat.isreg).
+- name: Clear Pwndrop staging directory
+  ansible.builtin.file:
+    path: /tmp/pwndrop-extract
+    state: absent
+  when: pwndrop_download_tarball | bool
+
+- name: Ensure Pwndrop extract staging directory
+  ansible.builtin.file:
+    path: /tmp/pwndrop-extract
+    state: directory
+    mode: "0755"
+  when: pwndrop_download_tarball | bool
+
+- name: Extract Pwndrop tarball to staging
   ansible.builtin.unarchive:
     src: /tmp/pwndrop.tar.gz
-    dest: /usr/local/bin
-    remote_src: yes
-    creates: /usr/local/bin/pwndrop
+    dest: /tmp/pwndrop-extract
+    remote_src: true
+  when: pwndrop_download_tarball | bool
 
-- name: Set Pwndrop permissions
+- name: Install pwndrop binary to /usr/local/bin/pwndrop
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if [ -d /usr/local/bin/pwndrop ]; then rm -rf /usr/local/bin/pwndrop; fi
+    root="/tmp/pwndrop-extract"
+    for f in \
+      "$root/pwndrop" \
+      "$root/pwndrop_linux_amd64" \
+      "$root/pwndrop-linux-amd64" \
+      "$root/pwndrop-linux-amd64/pwndrop" \
+      "$root/pwndrop_linux_amd64/pwndrop"
+    do
+      if [ -f "$f" ]; then
+        install -m 0755 -o root -g root "$f" /usr/local/bin/pwndrop
+        exit 0
+      fi
+    done
+    found=$(find "$root" -type f \( -name pwndrop -o -name 'pwndrop_linux*' -o -name 'pwndrop-linux*' \) 2>/dev/null | head -1)
+    if [ -z "$found" ]; then
+      found=$(find "$root" -type f -executable 2>/dev/null | head -1)
+    fi
+    if [ -z "$found" ]; then
+      echo "Could not find pwndrop binary under $root" >&2
+      ls -laR "$root" >&2 || true
+      exit 1
+    fi
+    install -m 0755 -o root -g root "$found" /usr/local/bin/pwndrop
+  args:
+    executable: /bin/bash
+  when: pwndrop_do_install | bool
+
+- name: Install pwndrop admin static files from tarball
+  ansible.builtin.shell: |
+    set -euo pipefail
+    root="/tmp/pwndrop-extract"
+    dst="{{ pwndrop_admin_dir | default('/opt/pwndrop/admin') }}"
+    parent="$(dirname "$dst")"
+    mkdir -p "$parent"
+    rm -rf "$dst"
+    for d in \
+      "$root/admin" \
+      "$root/pwndrop/admin" \
+      "$root/pwndrop-linux-amd64/admin" \
+      "$root/pwndrop_linux_amd64/admin"
+    do
+      if [ -d "$d" ]; then
+        cp -a "$d" "$parent/"
+        exit 0
+      fi
+    done
+    found=$(find "$root" -type d -name admin 2>/dev/null | head -1)
+    if [ -n "$found" ]; then
+      cp -a "$found" "$parent/"
+      exit 0
+    fi
+    echo "Could not find admin/ in pwndrop tarball under $root" >&2
+    ls -laR "$root" >&2 || true
+    exit 1
+  args:
+    executable: /bin/bash
+  when: pwndrop_download_tarball | bool
+
+- name: Assert Pwndrop binary exists
+  ansible.builtin.stat:
+    path: /usr/local/bin/pwndrop
+    follow: true
+  register: pwndrop_bin_check
+
+- name: Fail when Pwndrop binary is missing after extract
+  ansible.builtin.assert:
+    that:
+      - pwndrop_bin_check.stat.exists
+      - pwndrop_bin_check.stat.isreg
+    fail_msg: >-
+      Pwndrop binary not found at /usr/local/bin/pwndrop after extract.
+      Check tarball layout or set pwndrop_download_url.
+
+- name: Set Pwndrop binary permissions
   ansible.builtin.file:
     path: /usr/local/bin/pwndrop
     mode: '0755'
+    state: file
 
 - name: Create Pwndrop config directory
   ansible.builtin.file:
     path: /etc/pwndrop
     state: directory
+    mode: '0755'
 
-- name: Initialize Pwndrop
-  ansible.builtin.shell: /usr/local/bin/pwndrop --init
-  args:
-    chdir: /etc/pwndrop
-    creates: /etc/pwndrop/pwndrop.db
+- name: Ensure Pwndrop data directory exists
+  ansible.builtin.file:
+    path: "{{ pwndrop_data_dir | default('/var/lib/pwndrop') }}"
+    state: directory
+    mode: "0755"
 
-- name: Create Pwndrop systemd service
+- name: Assert Pwndrop admin assets exist
+  ansible.builtin.stat:
+    path: "{{ pwndrop_admin_dir | default('/opt/pwndrop/admin') }}"
+  register: pwndrop_admin_check
+
+- name: Fail when admin assets are missing
+  ansible.builtin.assert:
+    that:
+      - pwndrop_admin_check.stat.exists
+      - pwndrop_admin_check.stat.isdir
+    fail_msg: >-
+      Pwndrop admin/ is missing under {{ pwndrop_admin_dir | default('/opt/pwndrop/admin') }}.
+      Re-run the role so the tarball can be fetched, or copy admin/ from the release archive.
+
+- name: Deploy Pwndrop configuration (upstream has no --init; DB created on first service start)
+  ansible.builtin.template:
+    src: pwndrop.ini.j2
+    dest: /etc/pwndrop/pwndrop.ini
+    mode: "0644"
+  notify: Restart pwndrop
+
+- name: Deploy Pwndrop systemd service
   ansible.builtin.template:
     src: pwndrop.service.j2
     dest: /etc/systemd/system/pwndrop.service
+    mode: '0644'
+  register: pwndrop_unit
+  notify: Restart pwndrop
+
+- name: Reload systemd after Pwndrop unit change
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: pwndrop_unit.changed | bool
 
 - name: Start and enable Pwndrop
   ansible.builtin.systemd:
     name: pwndrop
     state: started
-    enabled: yes
-    daemon_reload: yes
+    enabled: true
+    daemon_reload: true

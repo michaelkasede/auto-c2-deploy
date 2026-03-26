@@ -1,19 +1,27 @@
 ---
-# `script` (util-linux) wraps evilginx in a PTY so readline works under systemd.
-- name: Ensure util-linux is present (provides /usr/bin/script)
+# Build deps: git clone + `make` (upstream outputs ./build/evilginx, -mod=vendor).
+- name: Install packages required to build Evilginx2
   ansible.builtin.apt:
-    name: util-linux
+    name:
+      - build-essential
+      - ca-certificates
+      - curl
+      - git
+      - make
+      - util-linux
     state: present
+    update_cache: true
   when: ansible_os_family == "Debian"
 
-- name: Install Go
+# go.mod requires go 1.22 (vendor build via Makefile).
+- name: Install Go toolchain
   ansible.builtin.unarchive:
-    src: https://go.dev/dl/go1.21.0.linux-amd64.tar.gz
+    src: https://go.dev/dl/go1.22.0.linux-amd64.tar.gz
     dest: /usr/local
-    remote_src: yes
-    creates: /usr/local/go
+    remote_src: true
+    creates: /usr/local/go/bin/go
 
-- name: Add Go to PATH
+- name: Add Go to PATH for ubuntu
   ansible.builtin.lineinfile:
     path: /home/ubuntu/.bashrc
     line: 'export PATH=$PATH:/usr/local/go/bin'
@@ -23,21 +31,51 @@
   ansible.builtin.git:
     repo: https://github.com/kgretzky/evilginx2.git
     dest: /opt/evilginx2
+    force: false
 
-- name: Build Evilginx2
-  ansible.builtin.shell: /usr/local/go/bin/go build -o evilginx
+# Upstream Makefile: go build -o ./build/evilginx -mod=vendor main.go
+- name: Build Evilginx2 binary (make)
+  ansible.builtin.command: make
   args:
     chdir: /opt/evilginx2
-    creates: /opt/evilginx2/evilginx
+    creates: /opt/evilginx2/build/evilginx
+  environment:
+    PATH: "/usr/local/go/bin:{{ ansible_env.PATH | default('/usr/bin:/bin') }}"
 
+- name: Assert Evilginx binary exists
+  ansible.builtin.stat:
+    path: /opt/evilginx2/build/evilginx
+  register: evilginx_bin
+
+- name: Fail when Evilginx binary is missing after build
+  ansible.builtin.assert:
+    that:
+      - evilginx_bin.stat.exists
+      - evilginx_bin.stat.isreg
+    fail_msg: >-
+      Evilginx build did not produce /opt/evilginx2/build/evilginx. Check build output (vendor + outbound HTTPS for first build).
+
+- name: Ensure Evilginx binary is executable
+  ansible.builtin.file:
+    path: /opt/evilginx2/build/evilginx
+    mode: '0755'
+
+# `script` (util-linux) wraps evilginx in a PTY so readline works under systemd.
 - name: Create Evilginx systemd service
   ansible.builtin.template:
     src: evilginx.service.j2
     dest: /etc/systemd/system/evilginx.service
+    mode: '0644'
+  register: evilginx_unit
+
+- name: Reload systemd after Evilginx unit change
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: evilginx_unit.changed | bool
 
 - name: Start and enable Evilginx
   ansible.builtin.systemd:
     name: evilginx
     state: started
-    enabled: yes
-    daemon_reload: yes
+    enabled: true
+    daemon_reload: true

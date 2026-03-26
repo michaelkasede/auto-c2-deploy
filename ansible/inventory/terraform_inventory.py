@@ -52,7 +52,6 @@ def get_inventory(engagement_file):
         "login_domain": f"login.{base_domain}",
         "cdn_domain": f"cdn.{base_domain}",
         "mythic_callback_paths": ["/index.php", "/api/v1/get", "/news/v1/", "/login/process"],
-        "decoy_image": "wordpress:latest",
         "decoy_site_url": decoy_site_url
     })
 

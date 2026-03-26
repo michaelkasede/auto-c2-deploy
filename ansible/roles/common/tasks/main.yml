@@ -32,22 +32,9 @@
       - lsb-release
       - jq
       - python3-pip
-      - python3-docker
     state: present
 
-- name: Install Docker
-  ansible.builtin.shell: |
-    curl -fsSL https://get.docker.com -o get-docker.sh
-    sh get-docker.sh
-    usermod -aG docker ubuntu
-  args:
-    creates: /usr/bin/docker
-
-- name: Install Docker Compose
-  ansible.builtin.get_url:
-    url: https://github.com/docker/compose/releases/latest/download/docker-compose-Linux-x86_64
-    dest: /usr/local/bin/docker-compose
-    mode: '0755'
+# Docker is installed only on the Mythic host (see roles/mythic). Other services use native binaries/systemd.
 
 - name: Create service directories
   ansible.builtin.file:

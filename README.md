@@ -1,60 +1,89 @@
-# Multi-Cloud Red Team Infrastructure
+# Multi-Cloud Red Team Infrastructure (Auto-c2-deploy)
 
-This directory contains a **standalone** multi-cloud deployment solution for red team infrastructure, completely separate from the Mythic project.
+Standalone multi-cloud Terraform + Ansible for red team infrastructure (redirector, Mythic, GoPhish, Evilginx, Pwndrop).
 
-## Quick Start
+## Operator inputs for deployment
+
+Collect these **before** you run `./engagement-manager.sh start` (or before manual Terraform). Values are **required** unless marked optional.
+
+### 1. Interactive prompts (`./engagement-manager.sh start`)
+
+| Input | Required | Description |
+|--------|----------|-------------|
+| **Engagement name** | Yes | Identifier for this run (e.g. `client-2024-03`). Used as Terraform `environment` / state naming. |
+| **Client name** | Yes | Label for reporting. |
+| **Duration (days)** | Yes | Stored in engagement metadata. |
+| **Cloud provider** | Yes | `aws`, `azure`, or `gcp` (default `aws` if Enter). |
+| **Region** | Yes* | GCP default `us-east4` if Enter; **AWS** prompts with no default — you must set a region. Azure default `centralus`. |
+| **Stealth level** | No | `high` (default), `medium`, or `low` — affects monitoring/cron behavior in Ansible. |
+| **Deployment mode** | No | `primary` (default) or `backup`. |
+| **Base domain** | Yes | Apex DNS name used for certs and vhosts (e.g. `zoom-meeting.duckdns.org`). Drives `api.`, `mail.`, `login.`, `cdn.`, `ops.` automatically. |
+| **Decoy site URL** | No | Shown in metadata; default `https://wordpress.org`. Used for redirector decoy context. |
+| **Operator allowlist** | No | Comma-separated **source CIDRs** allowed as “operators” on `ops.<base_domain>` (default: your current public IP `/32` from `ifconfig.me`). Empty list in Ansible means all clients are treated as operators on `ops.*`. |
+| **Confirm start** | Yes | `y` to proceed. |
+
+After Terraform completes, the script prompts for:
+
+| Input | Required | Description |
+|--------|----------|-------------|
+| **Redirector public IP** | Yes | Confirms the IP from Terraform (or paste from cloud console). Used to print **DNS instructions** for all hostnames pointing at the redirector. |
+| **DNS propagation** | Yes | Press Enter only after **A/CNAME** records for apex, `*`, `api`, `mail`, `login`, `cdn`, `ops` point at that IP. |
+
+### 2. Environment variables (shell that runs Terraform / Ansible)
+
+Set these in the **same shell** as `./engagement-manager.sh start` (child processes inherit them).
+
+| Variable | When | Required | Description |
+|----------|------|----------|-------------|
+| **`GCP_PROJECT_ID`** | GCP | **Yes** | Google Cloud project ID. `deploy-stealth.sh` defaults to `aegis-auto-c2` only if unset — set your real project. |
+| **`CLOUD_REGION`** | GCP (optional) | No | Overrides default region (e.g. `us-east4`). Engagement manager also sets `CLOUD_REGION` from your interactive region choice. |
+| **`DUCKDNS_TOKEN`** | TLS + DuckDNS | **Yes** for DNS-01 | DuckDNS API token for TXT challenges. |
+| **`CERTBOT_EMAIL`** | TLS | **Yes** | Let’s Encrypt account / contact email (redirector Certbot). |
+| **`DUCKDNS_PROPAGATION_SECONDS`** | TLS (optional) | No | Overrides default wait after TXT update before LE checks (redirector role default is `180`). |
+| **`SSH_PUBLIC_KEY_PATH`** | Terraform | No | Path to **public** key for `ubuntu` on all VMs (default `~/.ssh/id_rsa.pub`). Must match the private key you use to SSH. |
+| **`SSH_KEY_PATH`** | Ansible | No | Path to **private** key for Ansible SSH (default `~/.ssh/id_rsa`). Inventory uses this for the redirector and **ProxyCommand** to private IPs. |
+
+**Note:** `deploy-stealth.sh` passes **`OPERATOR_ALLOWLIST`** (comma-separated) from the engagement manager into Terraform as **`admin_ip`** for firewall `source_ranges`. If you use **multiple** CIDRs, ensure your Terraform provider accepts the string format you use (for a single strict CIDR, use one operator `/32` or edit `terraform.tfvars` manually).
+
+### 3. Files and generated state
+
+| Path | Required | Description |
+|------|----------|-------------|
+| **`engagements/current.json`** | Yes (after start) | Engagement + **`access_info.base_domain`** + **`infrastructure`** (Terraform outputs: redirector public IP, private IPs per service). Ansible dynamic inventory reads this file. |
+| **`outputs/<provider>_<mode>.json`** | Produced by Terraform | Merged into `current.json` by the engagement manager. |
+| **Cloud credentials** | Yes | `gcloud auth login` / `aws configure` / `az login` as appropriate — not stored in the repo. |
+
+### 4. Post-deploy: SSH host keys
+
+Each `./engagement-manager.sh start` provisions new VMs and may change the **redirector public IP** and host keys. If SSH fails with a host-key mismatch, remove the stale entry:
 
 ```bash
-cd multi-cloud-redteam
-./deploy-standalone.sh
+ssh-keygen -f "$HOME/.ssh/known_hosts" -R '<REDIRECTOR_PUBLIC_IP>'
 ```
 
-## Directory Structure
+Then rerun Ansible or SSH again.
 
-```
-multi-cloud-redteam/
-├── deploy-standalone.sh          # Standalone interactive deployment
-├── deploy-interactive.sh          # Original interactive deployment
-├── deploy-multi-cloud.sh           # Original multi-cloud script
-├── generate-terraform-config.py     # Terraform config generator
-├── configure-services.py           # Service configuration
-├── update-dns.py                 # DNS failover management
-├── test-failover.py              # Failover testing
-├── MULTI_CLOUD_README.md          # Complete documentation
-├── AWS_REDTEAM_README.md          # AWS-specific docs
-├── templates/                     # Cloud-init templates
-│   ├── cloud-init-mythic.sh
-│   ├── cloud-init-gophish.sh
-│   ├── cloud-init-evilginx.sh
-│   └── cloud-init-pwndrop.sh
-├── DEPLOYMENT_TEST.md             # Pre-test checklist (Terraform + Ansible + per-VM)
-├── scripts/                       # Utility scripts
-│   ├── validate-iac.sh            # Terraform + Ansible syntax validation
-│   ├── pre-deployment-check.sh    # engagement JSON + infra sanity checks
-│   ├── configure-multi-operator.sh
-│   ├── configure-stealth.sh
-│   └── aws-redteam-deploy.sh
-└── cloud-configs/                # Cloud-specific configs (created during deployment)
-    ├── aws/
-    ├── azure/
-    └── gcp/
-```
+---
 
-## Features
+## Quick start
 
-- **Standalone Deployment**: Completely separate from Mythic installation
-- **Interactive Deployment**: Choose cloud provider and deployment mode
-- **Multi-Cloud Support**: AWS, Azure, GCP with failover
-- **AWS Default**: AWS is the default selection
-- **Self-Contained**: All templates and scripts included
-- **Modular Design**: Each component is separate and reusable
-
-## Quick Start
-
-### Start New Engagement
 ```bash
-cd multi-cloud-redteam
+cd /path/to/Auto-c2-deploy
+
+# GCP example: set project + optional region + certbot + DuckDNS
+export GCP_PROJECT_ID="your-gcp-project-id"
+export CLOUD_REGION="us-east4"
+export CERTBOT_EMAIL="you@example.com"
+export DUCKDNS_TOKEN="your_duckdns_token"
+
 ./engagement-manager.sh start
+```
+
+Check status / stop:
+
+```bash
+./engagement-manager.sh --status
+./engagement-manager.sh stop
 ```
 
 ### Validate IaC (Terraform + Ansible)
@@ -63,146 +92,110 @@ From the repo root:
 
 ```bash
 ./scripts/validate-iac.sh
-```
-
-Before a full deployment test, run:
-
-```bash
 ./scripts/pre-deployment-check.sh
 ```
 
-See **`DEPLOYMENT_TEST.md`** for the full checklist (Terraform → `current.json` → Ansible) and per-service notes (redirector TLS, Mythic, GoPhish, Evilginx, Pwndrop).
+Full checklist: **`DEPLOYMENT_TEST.md`**.
 
-Install Ansible collections required by the playbooks (e.g. `community.docker` for the stealth role when `stealth_level` is `low`):
+### Manual Ansible (if not using the manager’s Ansible step)
 
 ```bash
-ansible-galaxy collection install -r ansible/collections/requirements.yml
+cd ansible
+ansible-playbook -i inventory/terraform_inventory.py site.yml
 ```
 
-## Environment Variables (DuckDNS + Certbot)
-If you are using DuckDNS for your DNS-01 certificate validation, export the following variables in the same shell where you run `./engagement-manager.sh start` (Ansible inherits the environment from the parent process):
+Inventory is **`ansible/inventory/terraform_inventory.py`**; it reads **`engagements/current.json`**. Private service hosts use the **redirector** as **ProxyCommand** jump host when `redirector_public_ip` is present under `infrastructure`.
+
+---
+
+## Environment variables (DuckDNS + Certbot)
+
+If you use DuckDNS for **DNS-01** wildcard validation, export these in the shell where Ansible runs (including the engagement manager flow):
 
 ```bash
 export DUCKDNS_TOKEN="YOUR_DUCKDNS_TOKEN"
 export CERTBOT_EMAIL="your_email@example.com"
 ```
 
-The redirector SSL automation reads these variables when invoking Certbot.
+### How Certbot is used
 
-### How Certbot is used in this project
-- **`certbot_email`** – At the start of the SSL/redirector roles, the contact email is set once from `CERTBOT_EMAIL` (trimmed) so every Certbot invocation uses the same value.
-- **Assert** – On the HTTP-01 path (when `stealth_level != "high"`), Ansible fails immediately with a clear error if `CERTBOT_EMAIL` is missing or blank, so you fix it before any certificate requests run.
-- **Certbot tasks** – Playbook tasks use the `{{ certbot_email }}` variable instead of an inline `lookup('env', …)` for consistency and readability.
-- **DuckDNS DNS-01 wildcard cert** – The redirector requests one certificate for `{{ base_domain }}` and `*.{{ base_domain }}` (for example: `zoom-meeting.duckdns.org` and `*.zoom-meeting.duckdns.org`) to avoid DuckDNS multi-SAN TXT challenge issues.
-- **Renewal** – Auto-renewal runs `certbot renew`, which does not take `--email`; the Let's Encrypt account (and renewals) stay tied to the account created when certificates were first requested with `CERTBOT_EMAIL`.
+- **`certbot_email`** — Set from `CERTBOT_EMAIL` for Certbot invocations.
+- **Assert** — On HTTP-01 paths, Ansible may fail fast if `CERTBOT_EMAIL` is missing (see redirector role).
+- **Wildcard** — Typically one certificate for `base_domain` and `*.base_domain` (DuckDNS DNS-01).
+- **Renewal** — `certbot renew` uses the existing LE account.
 
-### Certificate distribution to private VMs
-- **Automated by Ansible** – After the redirector obtains the wildcard certificate, `ansible/site.yml` copies:
-  - `/etc/letsencrypt/live/<base_domain>/fullchain.pem`
-  - `/etc/letsencrypt/live/<base_domain>/privkey.pem`
-  to each private service VM (`mythic`, `gophish`, `evilginx`, `pwndrop`) at:
-  - `/etc/aegis/certs/fullchain.pem`
-  - `/etc/aegis/certs/privkey.pem`
+### Certificate distribution
 
-### Manual fallback (if you need to copy certs yourself)
-If you ever need to do this manually, first SSH to the redirector, copy certs locally, then transfer to private hosts:
+After the redirector obtains the wildcard, `ansible/site.yml` copies `fullchain.pem` and `privkey.pem` to private VMs at `/etc/aegis/certs/`.
 
-```bash
-# 1) SSH to redirector
-ssh -i ~/.ssh/id_rsa ubuntu@<REDIRECTOR_PUBLIC_IP>
-
-# 2) On redirector: package certs
-sudo tar -czf /tmp/aegis-certs.tar.gz -C /etc/letsencrypt/live/<base_domain> fullchain.pem privkey.pem
-
-# 3) From your local machine: download bundle
-scp -i ~/.ssh/id_rsa ubuntu@<REDIRECTOR_PUBLIC_IP>:/tmp/aegis-certs.tar.gz .
-
-# 4) Upload to a private VM via ProxyJump
-scp -i ~/.ssh/id_rsa -o ProxyJump=ubuntu@<REDIRECTOR_PUBLIC_IP> aegis-certs.tar.gz ubuntu@<PRIVATE_VM_IP>:/tmp/
-
-# 5) On each private VM: install certs
-ssh -i ~/.ssh/id_rsa -J ubuntu@<REDIRECTOR_PUBLIC_IP> ubuntu@<PRIVATE_VM_IP> \
-  'sudo mkdir -p /etc/aegis/certs && sudo tar -xzf /tmp/aegis-certs.tar.gz -C /etc/aegis/certs && sudo chmod 600 /etc/aegis/certs/privkey.pem && sudo chmod 644 /etc/aegis/certs/fullchain.pem'
-```
+**Manual fallback:** SSH to the redirector, archive `/etc/letsencrypt/live/<base_domain>/`, `scp` via `ProxyJump` to each private host, and install under `/etc/aegis/certs/` with `privkey.pem` mode `0600` and `fullchain.pem` `0644`.
 
 ### GCP project ID
-When you choose **GCP** as the cloud provider, export your Google Cloud project ID in the same shell before running `./engagement-manager.sh start` (the deployment script reads it when generating Terraform config):
 
 ```bash
 export GCP_PROJECT_ID="your-gcp-project-id"
 ```
 
-Optionally set the region (default is `us-east4`):
+Optional region override:
 
 ```bash
 export CLOUD_REGION="us-east4"
 ```
 
-### Check Engagement Status
-```bash
-cd multi-cloud-redteam
-./engagement-manager.sh --status
+---
+
+## Directory layout (high level)
+
 ```
-
-### Stop Engagement
-```bash
-cd multi-cloud-redteam
-./engagement-manager.sh stop
+├── engagement-manager.sh          # Engagement lifecycle + Terraform + Ansible
+├── deploy-stealth.sh              # Terraform deploy (used by engagement manager)
+├── engagements/current.json       # Active engagement + infrastructure IPs
+├── ansible/
+│   ├── site.yml
+│   ├── inventory/terraform_inventory.py
+│   └── roles/
+├── cloud-configs/<provider>/terraform/
+├── scripts/
+│   ├── validate-iac.sh
+│   └── pre-deployment-check.sh
+├── DEPLOYMENT_TEST.md
+└── decoy-website/                 # Static decoy assets (redirector)
 ```
-
-### SSL Certificate Setup
-```bash
-cd multi-cloud-redteam
-./setup-ssl.sh outputs/aws_primary.json high
-```
-
-### DNS Failover Configuration
-```bash
-cd multi-cloud-redteam
-python3 update-dns.py --create-config
-# Edit dns-config.json with your domains and API keys
-python3 update-dns.py --provider aws --target azure --all
-```
-
-## Cloud Provider Options
-
-1. **AWS** (Default) - Primary production deployment
-2. **Azure** - Backup or standalone deployment
-3. **GCP** - Backup or standalone deployment
-4. **Multi-Cloud** - Deploy to all providers
-
-## Deployment Modes
-
-- **Primary**: Full deployment with all services
-- **Backup**: Minimal deployment for failover standby
-
-## Templates Included
-
-All cloud-init templates are included in the `templates/` directory:
-- `cloud-init-mythic.sh` - Mythic C2 server setup
-- `cloud-init-gophish.sh` - GoPhish phishing setup
-- `cloud-init-evilginx.sh` - Evilginx phishing setup
-- `cloud-init-pwndrop.sh` - Pwndrop file server setup
-
-## Scripts Included
-
-All utility scripts are included in the `scripts/` directory:
-- `configure-multi-operator.sh` - Multi-operator access setup
-- `configure-stealth.sh` - Security and stealth configurations
-- `aws-redteam-deploy.sh` - AWS-specific deployment
-
-## Dependencies
-
-- Terraform >= 1.0
-- Python 3.8+
-- Cloud CLI tools (aws, az, gcloud)
-- Docker and Docker Compose
-
-## Documentation
-
-- `MULTI_CLOUD_README.md` - Complete multi-cloud documentation
-- `AWS_REDTEAM_README.md` - AWS-specific deployment guide
 
 ---
 
-**Note**: This is a completely standalone deployment system that does not depend on any Mythic installation. All necessary templates and scripts are included within this directory.
+## Features
+
+- Terraform + Ansible for AWS, Azure, GCP
+- Central redirector (Nginx, TLS, stream routing)
+- Private-VM services (Mythic uses Docker; others use systemd binaries)
+
+## Cloud provider options
+
+1. **AWS** — Default in some prompts  
+2. **Azure**  
+3. **GCP**  
+4. **Multi** — Deploy to multiple providers (when using `deploy-stealth.sh` / `deploy-standalone.sh` interactively)
+
+## Deployment modes
+
+- **Primary** — Full stack  
+- **Backup** — Minimal / standby
+
+## Dependencies
+
+- Terraform >= 1.0  
+- Python 3.8+  
+- `ansible-playbook`, `jq`  
+- Cloud CLI (`aws`, `az`, or `gcloud`) for the provider you use  
+- Docker is installed **on the Mythic host only** by Ansible (not required on your laptop)
+
+## Documentation
+
+- **`DEPLOYMENT_TEST.md`** — Pre-flight checklist and smoke tests  
+- **`MULTI_CLOUD_README.md`** — Multi-cloud notes  
+- **`AWS_REDTEAM_README.md`** — AWS-specific notes  
+
+---
+
+This repository is a standalone deployment toolkit for lab / authorized engagement use.

@@ -1,0 +1,7 @@
+# Managed by Ansible — see roles/pwndrop (TLS terminated on redirector; use -no-autocert in unit).
+[pwndrop]
+listen_ip = {{ pwndrop_listen_ip | default('0.0.0.0') }}
+http_port = {{ pwndrop_http_port | default(80) }}
+https_port = {{ pwndrop_https_port | default(443) }}
+data_dir = {{ pwndrop_data_dir | default('/var/lib/pwndrop') }}
+admin_dir = {{ pwndrop_admin_dir | default('/opt/pwndrop/admin') }}

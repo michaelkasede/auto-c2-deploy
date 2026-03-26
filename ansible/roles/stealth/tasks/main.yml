@@ -28,13 +28,17 @@
     job: "/opt/{{ service_name }}/health-monitor.sh >> /opt/{{ service_name }}/health.log"
   when: stealth_level == "medium"
 
-- name: LOW Stealth - Install node exporter
-  community.docker.docker_container:
-    name: node-exporter
-    image: prom/node-exporter:latest
-    ports:
-      - "9100:9100"
-    restart_policy: unless-stopped
+- name: LOW Stealth - Install node exporter (apt; no Docker on backend VMs)
+  ansible.builtin.apt:
+    name: prometheus-node-exporter
+    state: present
+  when: stealth_level == "low"
+
+- name: LOW Stealth - Enable node exporter
+  ansible.builtin.systemd:
+    name: prometheus-node-exporter
+    state: started
+    enabled: true
   when: stealth_level == "low"
 
 - name: Check if Nginx conf.d directory exists

@@ -1,4 +1,10 @@
 #!/bin/bash
 # Rotate {{ service_name }} logs for stealth
-find /var/lib/docker/containers/ -name "*.log" -mtime +7 -delete
-docker system prune -f
+{% if service_name == 'mythic' %}
+if command -v docker >/dev/null 2>&1; then
+  find /var/lib/docker/containers/ -name "*.log" -mtime +7 -delete 2>/dev/null || true
+  docker system prune -f 2>/dev/null || true
+fi
+{% else %}
+journalctl --vacuum-time=7d 2>/dev/null || true
+{% endif %}
